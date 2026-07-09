@@ -90,5 +90,12 @@ export function makeRouter(db, { onCommentAgent, onDispatch, onApprove, onCancel
     res.json({ ok: true });
   });
 
+  r.get('/api/usage', async (_req, res) => {
+    // Import config lazily so requiring this router (e.g. in tests, before
+    // CLAUDE_BIN is set) doesn't eagerly evaluate config.js's env capture.
+    const { default: config } = await import('./config.js');
+    res.json({ today: store.agentRunsToday(db), active: store.activeAgentRuns(db), cap: config.MAX_AGENT_CONCURRENCY });
+  });
+
   return r;
 }

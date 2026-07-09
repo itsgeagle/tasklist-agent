@@ -234,3 +234,16 @@ test('boot reconcile fails orphaned diagnosing/executing tasks and cleans their 
   assert.equal(fs.existsSync(worktreePath), false);
   server.close();
 });
+
+test('usage endpoint counts agent runs for today', async () => {
+  const { db, base, repoId, server } = await boot();
+  const { id } = await (await fetch(`${base}/api/tasks`, { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ title: 'u', source_channel: 'C', source_ts: '3.3' }) })).json();
+  await fetch(`${base}/api/tasks/${id}/dispatch`, { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ repo_id: repoId, mode: 'code' }) });
+  for (let i = 0; i < 100; i++) { if (getTask(db, id).agent_phase === 'awaiting_approval') break; await new Promise((r) => setTimeout(r, 50)); }
+  const u = await (await fetch(`${base}/api/usage`)).json();
+  assert.equal(u.today >= 1, true);
+  assert.equal(u.cap, 2);
+  server.close();
+});

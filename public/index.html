@@ -39,6 +39,7 @@
     <button data-status="all">All</button>
   </span>
   <a href="/repos.html" style="margin-left:auto;color:#4a90d9;font-size:13px;">Repos</a>
+  <span id="usage" style="font-size:12px;opacity:.7;margin-left:12px;"></span>
 </header>
 <div class="banner" id="banner"></div>
 <main id="list">Loading…</main>
@@ -52,6 +53,8 @@ async function loadStatusBanner() {
   const bad = s.ingest && s.ingest.status === 'failed';
   b.style.display = bad ? 'block' : 'none';
   if (bad) b.textContent = 'Last Slack ingest failed — ' + (s.ingest.finished_at || '');
+  const u = await (await fetch('/api/usage')).json();
+  document.getElementById('usage').textContent = `agents: ${u.active}/${u.cap} · ${u.today} today`;
 }
 
 function taskHtml(t) {
