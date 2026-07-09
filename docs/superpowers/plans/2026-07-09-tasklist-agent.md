@@ -801,7 +801,9 @@ export function spawnAgent(db, { kind, task_id = null, prompt, timeoutMs = 30000
         ...process.env,
         SLACK_USER_TOKEN: config.SLACK_USER_TOKEN,
         DISCORD_WEBHOOK_URL: config.DISCORD_WEBHOOK_URL,
-        TASKLIST_API: config.API_BASE,
+        // Read env at call time (not the cached config value) so tests that boot
+        // an ephemeral-port server per case point the child at the right port.
+        TASKLIST_API: process.env.TASKLIST_API || config.API_BASE,
       },
     });
     let out = '', err = '', done = false;
@@ -829,15 +831,18 @@ import { acquireLock, releaseLock } from './store.js';
 import { spawnAgent } from './agent.js';
 import { ingestPrompt, digestPrompt } from './prompts.js';
 
+// Resolve at call time so tests can retarget the API per case (see agent.js note).
+const apiBase = () => process.env.TASKLIST_API || config.API_BASE;
+
 export async function runIngest(db) {
   if (!acquireLock(db, 'ingest')) return;
-  try { await spawnAgent(db, { kind: 'ingest', prompt: ingestPrompt({ apiBase: config.API_BASE }) }); }
+  try { await spawnAgent(db, { kind: 'ingest', prompt: ingestPrompt({ apiBase: apiBase() }) }); }
   finally { releaseLock(db, 'ingest'); }
 }
 
 export async function runDigest(db) {
   if (!acquireLock(db, 'digest')) return;
-  try { await spawnAgent(db, { kind: 'digest', prompt: digestPrompt({ apiBase: config.API_BASE }) }); }
+  try { await spawnAgent(db, { kind: 'digest', prompt: digestPrompt({ apiBase: apiBase() }) }); }
   finally { releaseLock(db, 'digest'); }
 }
 
@@ -887,7 +892,7 @@ test('ingest via stubbed claude creates deduped tasks', async () => {
 });
 ```
 
-> Note: `config.js` reads env at import time. The test sets `CLAUDE_BIN`/`TASKLIST_API` before importing `cron.js`. If your Node caches the config module across tests, run this file alone (the `?ingest` query busts the cron import; `spawnAgent` reads `config` which is already imported — so also set `process.env` before the first `store`/`config` import). Simplest guarantee: this test file imports nothing from `src` that transitively imports `config` until after env is set, except `store`/`routes` which do not import `config`.
+> Note: set `process.env.TASKLIST_API`/`CLAUDE_BIN` **before** the dynamic `import('../src/cron.js?...')` so the first `config` import reads them. Because `agent.js` and `cron.js` resolve `TASKLIST_API` at call time (not from cached `config.API_BASE`), each test's per-case env wins even though the `config` module is cached across tests in this file.
 
 - [ ] **Step 6: Run the test to verify it fails**
 
@@ -1081,7 +1086,7 @@ export async function runReply(db, taskId) {
   if (!task) return;
   if (!acquireLock(db, `reply:${taskId}`)) return;
   try {
-    await spawnAgent(db, { kind: 'reply', task_id: taskId, prompt: replyPrompt({ apiBase: config.API_BASE, task }) });
+    await spawnAgent(db, { kind: 'reply', task_id: taskId, prompt: replyPrompt({ apiBase: apiBase(), task }) });
   } finally {
     releaseLock(db, `reply:${taskId}`);
   }
