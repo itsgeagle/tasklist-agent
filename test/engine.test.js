@@ -52,3 +52,32 @@ test('dispatch → diagnose posts a plan and moves to awaiting_approval', async 
   assert.ok(t.worktree_path);
   server.close();
 });
+
+test('dispatch rejects non-integer repo_id and survives a nonexistent repo_id without crashing', async () => {
+  const { db, base, server } = await boot();
+  const { id } = await (await fetch(`${base}/api/tasks`, { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ title: 'Fix bug 2', source_channel: 'C', source_ts: '2.1' }) })).json();
+
+  const badRes = await fetch(`${base}/api/tasks/${id}/dispatch`, { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ repo_id: {}, mode: 'code' }) });
+  assert.equal(badRes.status, 400);
+  assert.match((await badRes.json()).error, /repo_id must be an integer/);
+
+  const badRes2 = await fetch(`${base}/api/tasks/${id}/dispatch`, { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ repo_id: 'abc', mode: 'code' }) });
+  assert.equal(badRes2.status, 400);
+
+  const okRes = await fetch(`${base}/api/tasks/${id}/dispatch`, { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ repo_id: 99999, mode: 'code' }) });
+  assert.equal(okRes.status, 200);
+
+  let t;
+  for (let i = 0; i < 100; i++) {
+    t = getTask(db, id);
+    if (t.comments.some((c) => c.author === 'system')) break;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  assert.ok(t.comments.some((c) => c.author === 'system' && /unknown mode or repo/.test(c.body)));
+  assert.notEqual(t.agent_phase, 'diagnosing');
+  server.close();
+});

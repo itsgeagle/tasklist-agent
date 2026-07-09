@@ -6,7 +6,20 @@ import { MODES } from './agent-modes.js';
 
 const apiBase = () => process.env.TASKLIST_API || config.API_BASE;
 
-export async function dispatch(db, taskId, { repo_id, base_branch, mode = 'code' }) {
+export async function dispatch(db, taskId, opts) {
+  try {
+    await doDispatch(db, taskId, opts);
+  } catch (e) {
+    console.error('[dispatch] failed', e);
+    try {
+      if (getTask(db, taskId)) addComment(db, taskId, 'system', 'Dispatch error: ' + String((e && e.message) || e));
+    } catch (e2) {
+      console.error('[dispatch] failed to record error comment', e2);
+    }
+  }
+}
+
+async function doDispatch(db, taskId, { repo_id, base_branch, mode = 'code' } = {}) {
   const task = getTask(db, taskId);
   if (!task) return;
   const modeDef = MODES[mode];

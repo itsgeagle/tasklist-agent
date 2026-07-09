@@ -7,6 +7,8 @@ import { makeRouter } from './src/routes.js';
 import { startSchedules, runReply } from './src/cron.js';
 import { dispatch } from './src/dispatch.js';
 
+process.on('unhandledRejection', (e) => console.error('[unhandledRejection]', e));
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const db = openDb(config.DB_PATH);
 // Clear any locks/running-runs left behind by a crash before we start

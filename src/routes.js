@@ -33,7 +33,7 @@ export function makeRouter(db, { onCommentAgent, onDispatch } = {}) {
     const { author = 'me', body = '', ask_agent = false } = req.body || {};
     const c = store.addComment(db, id, author, body);
     const wantsAgent = ask_agent || (author === 'me' && /@claude\b/i.test(body));
-    if (wantsAgent && onCommentAgent) setImmediate(() => onCommentAgent(id));
+    if (wantsAgent && onCommentAgent) setImmediate(() => Promise.resolve(onCommentAgent(id)).catch((e) => console.error('[onCommentAgent] failed', e)));
     res.json(c);
   });
 
@@ -67,7 +67,8 @@ export function makeRouter(db, { onCommentAgent, onDispatch } = {}) {
       return res.status(409).json({ error: 'agent already active on this task' });
     const { repo_id, base_branch, mode } = req.body || {};
     if (!repo_id) return res.status(400).json({ error: 'repo_id required' });
-    if (onDispatch) setImmediate(() => onDispatch(id, { repo_id, base_branch, mode }));
+    if (!Number.isInteger(Number(repo_id))) return res.status(400).json({ error: 'repo_id must be an integer' });
+    if (onDispatch) setImmediate(() => Promise.resolve(onDispatch(id, { repo_id: Number(repo_id), base_branch, mode })).catch((e) => console.error('[onDispatch] failed', e)));
     res.json({ ok: true });
   });
 
