@@ -38,8 +38,9 @@ Fetch open tasks: curl -s "${apiBase}/api/tasks?status=open"
 Fetch done today: curl -s "${apiBase}/api/tasks?status=done"
 Write a concise Discord-formatted digest (markdown, <1800 chars): what's open by priority,
 what got done, and any Slack items that look urgent.
-Post it to Discord:
+Post it to Discord. Do NOT use jq (it may not be installed) — build the JSON payload
+with python3 instead, which is always available:
   curl -s -X POST "$DISCORD_WEBHOOK_URL" -H "content-type: application/json" \\
-    -d "$(jq -n --arg c "<digest text>" '{content:$c}')"
+    --data "$(python3 -c 'import json,sys;print(json.dumps({"content":sys.argv[1]}))' "<digest text>")"
 Do NOT use any Anthropic API. Output a one-line JSON summary.`;
 }

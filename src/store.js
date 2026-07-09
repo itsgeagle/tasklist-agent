@@ -47,8 +47,13 @@ export function slug(s) {
 }
 
 export function fingerprint(channel, ts, title) {
-  return crypto.createHash('sha1')
-    .update(`${channel}:${ts}:${slug(title)}`).digest('hex');
+  // Titles are LLM-generated fresh on every ingest, so hashing them makes the
+  // fingerprint non-deterministic across runs of the *same* Slack message —
+  // that caused duplicate tasks and resurrected "done" items. Key on the
+  // stable Slack identity (channel + ts) whenever ts is present; only fall
+  // back to the title slug when there's no ts to anchor on.
+  const base = ts ? `${channel}:${ts}` : `${channel}:${slug(title)}`;
+  return crypto.createHash('sha1').update(base).digest('hex');
 }
 
 export function upsertTask(db, t) {
@@ -135,9 +140,29 @@ export function acquireLock(db, key) {
   try {
     db.prepare('INSERT INTO meta (key, value) VALUES (?, ?)').run(`lock:${key}`, 'held');
     return true;
-  } catch { return false; }
+  } catch (err) {
+    // Only a UNIQUE/PK violation means "lock already held" — that's the
+    // expected contention case. Anything else (disk full, corruption, etc.)
+    // must not be swallowed as a false "lock held".
+    if (err.code?.startsWith('SQLITE_CONSTRAINT')) return false;
+    throw err;
+  }
 }
 
 export function releaseLock(db, key) {
   db.prepare('DELETE FROM meta WHERE key = ?').run(`lock:${key}`);
+}
+
+// Reconcile persisted locks and orphaned runs left behind by a crash. A dead
+// process between acquire/release leaves `lock:*` rows in `meta` forever
+// (launchd KeepAlive just restarts us, it doesn't clear them), permanently
+// blocking ingest/digest; likewise any `runs` row still 'running' at boot
+// died mid-flight and should surface as a failure, not a stuck UI spinner.
+export function reconcile(db) {
+  db.prepare("DELETE FROM meta WHERE key LIKE 'lock:%'").run();
+  db.prepare(
+    "UPDATE runs SET status='failed', finished_at=datetime('now'), " +
+    "log = COALESCE(log,'') || '[reconciled: interrupted at boot]' " +
+    "WHERE status='running'"
+  ).run();
 }

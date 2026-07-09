@@ -5,16 +5,26 @@ import { createRun, finishRun } from './store.js';
 export function spawnAgent(db, { kind, task_id = null, prompt, timeoutMs = 300000 }) {
   const runId = createRun(db, { kind, task_id });
   return new Promise((resolve) => {
-    const child = spawn(config.CLAUDE_BIN, ['-p', prompt, '--output-format', 'json'], {
-      env: {
-        ...process.env,
-        SLACK_USER_TOKEN: config.SLACK_USER_TOKEN,
-        DISCORD_WEBHOOK_URL: config.DISCORD_WEBHOOK_URL,
-        // Read env at call time (not the cached config value) so tests that boot
-        // an ephemeral-port server per case point the child at the right port.
-        TASKLIST_API: process.env.TASKLIST_API || config.API_BASE,
-      },
-    });
+    // Start from a copy of process.env and strip every ANTHROPIC_* var so the
+    // child never sees an API key. If it did, `claude` would bill the paid
+    // Anthropic API instead of running against the subscription — never allowed.
+    const childEnv = { ...process.env };
+    for (const key of Object.keys(childEnv)) {
+      if (/^ANTHROPIC_/.test(key)) delete childEnv[key];
+    }
+    childEnv.SLACK_USER_TOKEN = config.SLACK_USER_TOKEN;
+    childEnv.DISCORD_WEBHOOK_URL = config.DISCORD_WEBHOOK_URL;
+    // Read env at call time (not the cached config value) so tests that boot
+    // an ephemeral-port server per case point the child at the right port.
+    childEnv.TASKLIST_API = process.env.TASKLIST_API || config.API_BASE;
+
+    const child = spawn(config.CLAUDE_BIN, [
+      '-p', prompt,
+      '--output-format', 'json',
+      // Allow the Bash tool without an interactive approval prompt so the
+      // headless run can execute the curl/Bash commands the prompts require.
+      '--allowedTools', 'Bash',
+    ], { env: childEnv });
     let out = '', err = '', done = false;
     const finish = (status) => {
       if (done) return; done = true;
