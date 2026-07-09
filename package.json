@@ -6,6 +6,7 @@
   "engines": { "node": ">=18" },
   "scripts": {
     "start": "node server.js",
+    "update": "bash scripts/update.sh",
     "test": "node --test"
   },
   "dependencies": {

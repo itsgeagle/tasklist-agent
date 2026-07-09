@@ -43,6 +43,19 @@ cp .env.example .env        # then edit: SLACK_USER_TOKEN=..., DISCORD_WEBHOOK_U
 launchd plist so the always-on service can find `claude`/`node`. Then open
 **http://tasklist** (fallback if you skip the `pf` step: **http://tasklist:8787**).
 
+## Updating (after editing code)
+
+There's no build step and the launchd agent loads the code once at startup, so new
+code only takes effect on restart:
+
+```bash
+npm run update              # restarts the launchd agent, re-reading server.js from disk
+npm run update -- --kill-strays   # also stop any manual instances left on other ports
+```
+
+No sudo needed. Use `./setup.sh` instead only when the launchd plist, hosts entry, or
+pf redirect itself changed.
+
 ## First-run checklist (important — tests pass with a stub, so verify the *real* path)
 
 The automated suite exercises a stubbed `claude`; these only surface on a live run:
