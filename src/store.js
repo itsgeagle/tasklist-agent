@@ -102,7 +102,7 @@ export function getTask(db, id) {
 }
 
 export function patchTask(db, id, fields) {
-  const allowed = ['status', 'title', 'detail', 'priority'];
+  const allowed = ['status', 'title', 'detail', 'priority', 'pr_url'];
   const sets = allowed.filter((k) => k in fields);
   if (sets.length) {
     const clause = sets.map((k) => `${k} = @${k}`).join(', ');
@@ -172,6 +172,17 @@ export function releaseLock(db, key) {
 // (launchd KeepAlive just restarts us, it doesn't clear them), permanently
 // blocking ingest/digest; likewise any `runs` row still 'running' at boot
 // died mid-flight and should surface as a failure, not a stuck UI spinner.
+// Store.js deliberately does NOT import worktree.js: that module pulls in
+// config.js (env-driven CLAUDE_BIN/WORKTREE_DIR etc.), and store.js is
+// statically imported very early (e.g. at the top of test files, before a
+// test's boot() helper gets a chance to set CLAUDE_BIN for the run). Loading
+// config.js that early froze CLAUDE_BIN on its default ('claude') instead of
+// the test stub, hanging every agent-spawning test — confirmed by adding
+// that import and watching diagnose never leave 'diagnosing'. So reconcile()
+// only touches the DB here and returns the {repo_path, worktree_path} pairs
+// that need cleaning; the caller (server.js, which already imports
+// worktree.js for the dispatch/approve/cancel flows) does the actual
+// filesystem cleanup right after calling reconcile() at boot.
 export function reconcile(db) {
   db.prepare("DELETE FROM meta WHERE key LIKE 'lock:%'").run();
   db.prepare(
@@ -179,6 +190,20 @@ export function reconcile(db) {
     "log = COALESCE(log,'') || '[reconciled: interrupted at boot]' " +
     "WHERE status='running'"
   ).run();
+  // A crash mid-diagnose/mid-execute leaves the task pinned in a transient
+  // phase forever (nothing else ever transitions it out) and its worktree
+  // still checked out on disk. Surface it as a failure and hand back what
+  // needs reclaiming.
+  const orphaned = db.prepare(
+    "SELECT id, repo_id, worktree_path FROM tasks WHERE agent_phase IN ('diagnosing','executing')"
+  ).all();
+  const orphanedWorktrees = [];
+  for (const t of orphaned) {
+    const repo = t.repo_id ? getRepo(db, t.repo_id) : null;
+    if (repo && t.worktree_path) orphanedWorktrees.push({ repo_path: repo.path, worktree_path: t.worktree_path });
+    db.prepare("UPDATE tasks SET agent_phase='failed', updated_at=datetime('now') WHERE id = ?").run(t.id);
+  }
+  return { orphanedWorktrees };
 }
 
 export function addRepo(db, { name, path, default_branch }) {

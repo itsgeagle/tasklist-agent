@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 // Test/dev stand-in for `claude -p`. Performs the API writes a real run would,
 // driven by keywords in the prompt, then prints canned JSON.
+import { execSync } from 'node:child_process';
+import fs from 'node:fs';
+
 const args = process.argv.slice(2);
 const prompt = args[args.indexOf('-p') + 1] || '';
 const api = process.env.TASKLIST_API;
@@ -29,6 +32,15 @@ async function main() {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ author: 'agent', body: 'Root cause: X. Plan: change file Y.' }) });
     process.stdout.write(JSON.stringify({ result: 'diagnosed' }));
+  } else if (/EXECUTE task_id=(\d+)/.test(prompt)) {
+    const id = prompt.match(/EXECUTE task_id=(\d+)/)[1];
+    fs.writeFileSync('fix.txt', 'fixed');                  // cwd is the worktree
+    execSync('git add -A && git commit --no-gpg-sign -m "fix" ', { stdio: 'ignore' });
+    await fetch(`${api}/api/tasks/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ pr_url: 'local-branch:agent/task-' + id }) });
+    await fetch(`${api}/api/tasks/${id}/comments`, { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ author: 'agent', body: 'Done. Draft PR opened.' }) });
+    process.stdout.write(JSON.stringify({ result: 'executed' }));
   } else {
     process.stdout.write(JSON.stringify({ result: 'noop' }));
   }

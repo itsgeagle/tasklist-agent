@@ -2,7 +2,7 @@ import express from 'express';
 import * as store from './store.js';
 import { validateRepo } from './repos.js';
 
-export function makeRouter(db, { onCommentAgent, onDispatch } = {}) {
+export function makeRouter(db, { onCommentAgent, onDispatch, onApprove, onCancel } = {}) {
   const r = express.Router();
 
   r.get('/api/tasks', (req, res) => {
@@ -69,6 +69,24 @@ export function makeRouter(db, { onCommentAgent, onDispatch } = {}) {
     if (!repo_id) return res.status(400).json({ error: 'repo_id required' });
     if (!Number.isInteger(Number(repo_id))) return res.status(400).json({ error: 'repo_id must be an integer' });
     if (onDispatch) setImmediate(() => Promise.resolve(onDispatch(id, { repo_id: Number(repo_id), base_branch, mode })).catch((e) => console.error('[onDispatch] failed', e)));
+    res.json({ ok: true });
+  });
+
+  r.post('/api/tasks/:id/approve', (req, res) => {
+    const id = Number(req.params.id);
+    const task = store.getTask(db, id);
+    if (!task) return res.status(404).json({ error: 'not found' });
+    if (task.agent_phase !== 'awaiting_approval') return res.status(409).json({ error: 'not awaiting approval' });
+    if (onApprove) setImmediate(() => Promise.resolve(onApprove(id, (req.body || {}).plan)).catch((e) => console.error('[onApprove] failed', e)));
+    res.json({ ok: true });
+  });
+
+  r.post('/api/tasks/:id/cancel', (req, res) => {
+    const id = Number(req.params.id);
+    if (!store.getTask(db, id)) return res.status(404).json({ error: 'not found' });
+    if (onCancel) {
+      try { onCancel(id); } catch (e) { console.error('[onCancel] failed', e); }
+    }
     res.json({ ok: true });
   });
 

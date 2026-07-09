@@ -1,6 +1,6 @@
 import config from './config.js';
-import { getRepo, getTask, setAgentFields, acquireLock, releaseLock, activeAgentRuns, addComment } from './store.js';
-import { spawnAgent } from './agent.js';
+import { getRepo, getTask, setAgentFields, acquireLock, releaseLock, activeAgentRuns, addComment, activeRunIdForTask, listComments } from './store.js';
+import { spawnAgent, cancelRun } from './agent.js';
 import { createWorktree, cleanupWorktree } from './worktree.js';
 import { MODES } from './agent-modes.js';
 
@@ -49,4 +49,52 @@ async function doDispatch(db, taskId, { repo_id, base_branch, mode = 'code' } = 
   } finally {
     releaseLock(db, `agent:${taskId}`);
   }
+}
+
+export async function approve(db, taskId, opts = {}) {
+  try {
+    await doApprove(db, taskId, opts);
+  } catch (e) {
+    console.error('[approve] failed', e);
+    try {
+      if (getTask(db, taskId)) addComment(db, taskId, 'system', 'Approve error: ' + String((e && e.message) || e));
+    } catch (e2) {
+      console.error('[approve] failed to record error comment', e2);
+    }
+  }
+}
+
+async function doApprove(db, taskId, { plan } = {}) {
+  const task = getTask(db, taskId);
+  if (!task || task.agent_phase !== 'awaiting_approval') return;
+  const repo = getRepo(db, task.repo_id);
+  const modeDef = MODES[task.agent_mode] || MODES.code;
+  // plan = edited plan if provided, else the last agent comment (the diagnosis)
+  const planText = plan || [...listComments(db, taskId)].reverse().find((c) => c.author === 'agent')?.body || 'Fix the issue.';
+  if (!acquireLock(db, `agent:${taskId}`)) return;
+  setAgentFields(db, taskId, { agent_phase: 'executing' });
+  try {
+    const res = await spawnAgent(db, {
+      kind: 'execute', task_id: taskId, tools: modeDef.executeTools, cwd: task.worktree_path,
+      timeoutMs: config.EXECUTE_TIMEOUT_MS,
+      prompt: modeDef.executePrompt({ apiBase: apiBase(), task, worktreePath: task.worktree_path, plan: planText }),
+    });
+    setAgentFields(db, taskId, { agent_phase: res.status === 'ok' ? 'done' : 'failed' });
+    if (res.status !== 'ok') addComment(db, taskId, 'system', 'Execution failed.');
+  } finally {
+    releaseLock(db, `agent:${taskId}`);
+    if (repo && task.worktree_path) cleanupWorktree(repo.path, task.worktree_path);
+  }
+}
+
+export function cancel(db, taskId) {
+  const task = getTask(db, taskId);
+  if (!task) return;
+  const runId = activeRunIdForTask(db, taskId);
+  if (runId) cancelRun(db, runId);
+  releaseLock(db, `agent:${taskId}`);
+  const repo = getRepo(db, task.repo_id);
+  if (repo && task.worktree_path) cleanupWorktree(repo.path, task.worktree_path);
+  setAgentFields(db, taskId, { agent_phase: 'failed' });
+  addComment(db, taskId, 'system', 'Agent run cancelled.');
 }
