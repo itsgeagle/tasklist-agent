@@ -33,3 +33,32 @@ test('ingest via stubbed claude creates deduped tasks', async () => {
   assert.ok(tasks.find((t) => t.title.includes('Sam')));
   server.close();
 });
+
+test('commenting @claude spawns a reply run that posts an agent comment', async () => {
+  const db = openDb(':memory:');
+  const app = express();
+  app.use(express.json());
+  const { runReply } = await import('../src/cron.js?reply');
+  app.use(makeRouter(db, { onCommentAgent: (id) => runReply(db, id) }));
+  const server = await new Promise((res) => { const s = app.listen(0, () => res(s)); });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  process.env.TASKLIST_API = base;
+  process.env.CLAUDE_BIN = STUB;
+
+  const { id } = await (await fetch(`${base}/api/tasks`, { method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ title: 'Help me', source_channel: 'C1', source_ts: '1.1' }) })).json();
+  await fetch(`${base}/api/tasks/${id}/comments`, { method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ author: 'me', body: '@claude please help', ask_agent: true }) });
+
+  // Poll until the agent comment lands (reply run is async).
+  let t;
+  for (let i = 0; i < 50; i++) {
+    t = await (await fetch(`${base}/api/tasks/${id}`)).json();
+    if (t.comments.some((c) => c.author === 'agent')) break;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  assert.ok(t.comments.some((c) => c.author === 'agent'), 'agent comment posted');
+  server.close();
+});

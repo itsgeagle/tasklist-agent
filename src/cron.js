@@ -1,8 +1,8 @@
 import cron from 'node-cron';
 import config from './config.js';
-import { acquireLock, releaseLock } from './store.js';
+import { acquireLock, releaseLock, getTask } from './store.js';
 import { spawnAgent } from './agent.js';
-import { ingestPrompt, digestPrompt } from './prompts.js';
+import { ingestPrompt, digestPrompt, replyPrompt } from './prompts.js';
 
 // Resolve at call time so tests can retarget the API per case (see agent.js note).
 const apiBase = () => process.env.TASKLIST_API || config.API_BASE;
@@ -17,6 +17,17 @@ export async function runDigest(db) {
   if (!acquireLock(db, 'digest')) return;
   try { await spawnAgent(db, { kind: 'digest', prompt: digestPrompt({ apiBase: apiBase() }) }); }
   finally { releaseLock(db, 'digest'); }
+}
+
+export async function runReply(db, taskId) {
+  const task = getTask(db, taskId);
+  if (!task) return;
+  if (!acquireLock(db, `reply:${taskId}`)) return;
+  try {
+    await spawnAgent(db, { kind: 'reply', task_id: taskId, prompt: replyPrompt({ apiBase: apiBase(), task }) });
+  } finally {
+    releaseLock(db, `reply:${taskId}`);
+  }
 }
 
 export function startSchedules(db) {
