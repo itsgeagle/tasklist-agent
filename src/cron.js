@@ -9,13 +9,13 @@ const apiBase = () => process.env.TASKLIST_API || config.API_BASE;
 
 export async function runIngest(db) {
   if (!acquireLock(db, 'ingest')) return;
-  try { await spawnAgent(db, { kind: 'ingest', prompt: ingestPrompt({ apiBase: apiBase() }) }); }
+  try { await spawnAgent(db, { kind: 'ingest', prompt: ingestPrompt({ apiBase: apiBase() }), timeoutMs: config.INGEST_TIMEOUT_MS }); }
   finally { releaseLock(db, 'ingest'); }
 }
 
 export async function runDigest(db) {
   if (!acquireLock(db, 'digest')) return;
-  try { await spawnAgent(db, { kind: 'digest', prompt: digestPrompt({ apiBase: apiBase() }) }); }
+  try { await spawnAgent(db, { kind: 'digest', prompt: digestPrompt({ apiBase: apiBase() }), timeoutMs: config.DIGEST_TIMEOUT_MS }); }
   finally { releaseLock(db, 'digest'); }
 }
 

@@ -17,6 +17,10 @@ export default {
   API_BASE: process.env.TASKLIST_API || `http://127.0.0.1:${PORT}`,
   WORKTREE_DIR: process.env.WORKTREE_DIR || path.join(ROOT, 'data', 'worktrees'),
   MAX_AGENT_CONCURRENCY: Number(process.env.MAX_AGENT_CONCURRENCY || 2),
+  // A full-workspace Slack scan can run several minutes; give it real headroom
+  // (a live run measured 4m21s). 10 min default, override via env if needed.
+  INGEST_TIMEOUT_MS: Number(process.env.INGEST_TIMEOUT_MS || 600000),
+  DIGEST_TIMEOUT_MS: Number(process.env.DIGEST_TIMEOUT_MS || 600000),
   DIAGNOSE_TIMEOUT_MS: Number(process.env.DIAGNOSE_TIMEOUT_MS || 600000),
   EXECUTE_TIMEOUT_MS: Number(process.env.EXECUTE_TIMEOUT_MS || 2700000),
 };
