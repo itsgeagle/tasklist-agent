@@ -1,5 +1,6 @@
 import express from 'express';
 import * as store from './store.js';
+import * as runbus from './runbus.js';
 import { validateRepo } from './repos.js';
 
 const JOBS = ['ingest', 'digest'];
@@ -15,6 +16,26 @@ export function makeRouter(db, { onCommentAgent, onDispatch, onApprove, onCancel
     if (!JOBS.includes(job)) return res.status(400).json({ error: 'unknown job' });
     if (onRunJob) setImmediate(() => Promise.resolve(onRunJob(job)).catch((e) => console.error('[onRunJob] failed', e)));
     res.json({ ok: true });
+  });
+
+  // Live trace of a run via Server-Sent Events. Replays the current buffer, then
+  // streams events until the run ends or the client disconnects.
+  r.get('/api/runs/:kind/stream', (req, res) => {
+    const { kind } = req.params;
+    if (!JOBS.includes(kind)) return res.status(400).json({ error: 'unknown kind' });
+    res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+    res.flushHeaders?.();
+    let closed = false;
+    let unsub = () => {};
+    const send = (ev) => { if (!closed) res.write(`data: ${JSON.stringify(ev)}\n\n`); };
+    const hb = setInterval(() => { if (!closed) res.write(': hb\n\n'); }, 15000);
+    const cleanup = () => { if (closed) return; closed = true; clearInterval(hb); unsub(); try { res.end(); } catch { /* already gone */ } };
+    req.on('close', cleanup);
+    // subscribe() replays the buffer synchronously; if that buffer already ends
+    // the run, cleanup() runs here with unsub still a no-op — so drop the just-
+    // added subscriber afterwards.
+    unsub = runbus.subscribe(kind, (ev) => { send(ev); if (ev.t === 'end') cleanup(); });
+    if (closed) unsub();
   });
 
   r.get('/api/tasks', (req, res) => {

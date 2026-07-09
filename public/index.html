@@ -28,6 +28,14 @@
   .pill { font-size: 11px; padding: 2px 6px; border-radius: 10px; border: 1px solid #8886; margin-left: 6px; }
   .pill.executing, .pill.diagnosing { color: #d68910; } .pill.done { color: #27ae60; } .pill.failed { color: #c0392b; }
   .agentbar { margin: 8px 0 0 26px; display: flex; gap: 6px; align-items: center; }
+  #console { border-bottom: 1px solid #8884; background: #0001; }
+  #console .chead { display: flex; align-items: center; gap: 10px; padding: 6px 20px; font-size: 13px; }
+  #console .dot { color: #d68910; } #console .dot.done { color: #27ae60; } #console .dot.failed { color: #c0392b; }
+  #console .close { margin-left: auto; cursor: pointer; border: 1px solid #8886; border-radius: 6px; padding: 1px 8px; }
+  #conlog { margin: 0; padding: 0 20px 10px 20px; max-height: 260px; overflow: auto;
+    font: 12px/1.5 ui-monospace, Menlo, monospace; white-space: pre-wrap; word-break: break-word; }
+  #conlog .tool { color: #4a90d9; } #conlog .result { opacity: .75; } #conlog .stderr { color: #c0392b; }
+  #conlog .done { color: #27ae60; } #conlog .start { opacity: .7; }
 </style>
 </head>
 <body>
@@ -47,6 +55,15 @@
   <span id="usage" style="font-size:12px;opacity:.7;"></span>
 </header>
 <div class="banner" id="banner"></div>
+<div id="console" hidden>
+  <div class="chead">
+    <span class="dot" id="condot">●</span>
+    <strong id="contitle">run</strong>
+    <span id="constatus" style="opacity:.7;"></span>
+    <span class="close" onclick="closeConsole()">close</span>
+  </div>
+  <pre id="conlog"></pre>
+</div>
 <main id="list">Loading…</main>
 <script>
 let status = 'open';
@@ -69,10 +86,49 @@ async function runJob(job, btn) {
   const label = btn.textContent;
   btn.disabled = true;
   btn.textContent = job === 'ingest' ? 'Pulling…' : 'Running…';
+  openConsole(job);
   try {
     await fetch('/api/run/' + job, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
   } catch (e) { /* status label reflects real run state on next poll */ }
   setTimeout(() => { btn.disabled = false; btn.textContent = label; loadStatusBanner(); }, 1500);
+}
+
+let es = null;
+function closeConsole() {
+  if (es) { es.close(); es = null; }
+  document.getElementById('console').hidden = true;
+}
+function conLine(cls, text) {
+  const log = document.getElementById('conlog');
+  const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 30;
+  const div = document.createElement('div');
+  if (cls) div.className = cls;
+  div.textContent = text;
+  log.appendChild(div);
+  if (atBottom) log.scrollTop = log.scrollHeight;
+}
+function openConsole(kind) {
+  if (es) { es.close(); es = null; }
+  document.getElementById('console').hidden = false;
+  document.getElementById('contitle').textContent = kind === 'ingest' ? 'Slack pull' : 'Digest';
+  document.getElementById('conlog').innerHTML = '';
+  const dot = document.getElementById('condot'), st = document.getElementById('constatus');
+  dot.className = 'dot'; st.textContent = 'running…';
+  es = new EventSource('/api/runs/' + kind + '/stream');
+  es.onmessage = (m) => {
+    let ev; try { ev = JSON.parse(m.data); } catch { return; }
+    if (ev.t === 'reset') { document.getElementById('conlog').innerHTML = ''; return; }
+    if (ev.t === 'end') {
+      dot.className = 'dot ' + (ev.status === 'ok' ? 'done' : 'failed');
+      st.textContent = ev.status;
+      es.close(); es = null;
+      render(); loadStatusBanner();
+      return;
+    }
+    const prefix = { tool: '▸ ', result: '   → ', stderr: '⚠ ', done: '■ ', start: '● ' }[ev.t] || '  ';
+    conLine(ev.t, prefix + (ev.text || ''));
+  };
+  es.onerror = () => { st.textContent = 'stream lost'; };
 }
 
 function taskHtml(t) {

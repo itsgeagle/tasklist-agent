@@ -63,6 +63,72 @@ test('commenting @claude spawns a reply run that posts an agent comment', async 
   server.close();
 });
 
+test('runbus replays buffer to late subscribers, then streams, and caps growth', async () => {
+  const runbus = await import('../src/runbus.js');
+  runbus._reset();
+  runbus.begin('ingest', 7);
+  runbus.publish('ingest', { t: 'tool', text: 'curl auth.test' });
+  const seen = [];
+  const unsub = runbus.subscribe('ingest', (ev) => seen.push(ev));
+  // replay delivered reset + the buffered tool event
+  assert.ok(seen.some((e) => e.t === 'reset'));
+  assert.ok(seen.some((e) => e.t === 'tool'));
+  runbus.publish('ingest', { t: 'result', text: 'ok' });   // live
+  assert.equal(seen[seen.length - 1].t, 'result');
+  runbus.end('ingest', 'ok');
+  assert.equal(seen[seen.length - 1].t, 'end');
+  unsub();
+  runbus.publish('ingest', { t: 'tool', text: 'after unsub' }); // must not reach us
+  assert.ok(!seen.some((e) => e.text === 'after unsub'));
+});
+
+test('a stubbed ingest publishes a live trace (start … tool/result … end) to runbus', async () => {
+  const db = openDb(':memory:');
+  const app = express();
+  app.use(express.json());
+  const server = await new Promise((res) => { const s = app.listen(0, () => res(s)); });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  process.env.TASKLIST_API = base;
+  process.env.CLAUDE_BIN = STUB;
+  const runbus = await import('../src/runbus.js');
+  runbus._reset();
+  const { runIngest } = await import('../src/cron.js?stream');
+  await runIngest(db);
+  const snap = runbus.snapshot('ingest');
+  const kinds = snap.events.map((e) => e.t);
+  assert.ok(kinds.includes('start'), 'has start');
+  assert.ok(kinds.includes('tool'), 'has a tool call');
+  assert.ok(kinds.includes('end'), 'has end');
+  assert.equal(snap.events.find((e) => e.t === 'end').status, 'ok');
+  server.close();
+});
+
+test('SSE endpoint streams the trace as event-stream frames and 400s unknown kinds', async () => {
+  const db = openDb(':memory:');
+  const app = express();
+  app.use(express.json());
+  app.use(makeRouter(db, { onRunJob: () => {} }));
+  const server = await new Promise((res) => { const s = app.listen(0, () => res(s)); });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  process.env.TASKLIST_API = base;
+  process.env.CLAUDE_BIN = STUB;
+  const runbus = await import('../src/runbus.js');
+  runbus._reset();
+  const { runIngest } = await import('../src/cron.js?sse');
+  await runIngest(db);                    // completes; buffer holds the whole trace incl. 'end'
+
+  const r = await fetch(`${base}/api/runs/ingest/stream`);
+  assert.match(r.headers.get('content-type'), /text\/event-stream/);
+  const text = await r.text();            // resolves because the replayed 'end' closes the stream
+  assert.ok(text.includes('"t":"start"'), 'streamed a start frame');
+  assert.ok(text.includes('"t":"end"'), 'streamed an end frame');
+
+  const bad = await fetch(`${base}/api/runs/bogus/stream`);
+  assert.equal(bad.status, 400);
+  server.close();
+  server.closeAllConnections?.();         // drop the keep-alive socket so the test process can exit
+});
+
 test('manual run route triggers the job callback and rejects unknown jobs', async () => {
   const db = openDb(':memory:');
   const calls = [];
