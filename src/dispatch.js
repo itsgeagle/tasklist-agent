@@ -91,7 +91,23 @@ export function cancel(db, taskId) {
   const task = getTask(db, taskId);
   if (!task) return;
   const runId = activeRunIdForTask(db, taskId);
-  if (runId) cancelRun(db, runId);
+  if (runId && cancelRun(db, runId)) {
+    // A live child was found and killed. The owning dispatch()/approve() call
+    // is still awaiting spawnAgent — when that (now-killed) promise resolves,
+    // ITS OWN finally will release the lock, set agent_phase to 'failed', and
+    // clean up the worktree. If we also did those things here, the lock could
+    // be re-acquired by a fresh dispatch in between, and the stale owner's
+    // later releaseLock would then rip the lock out from under the NEW run
+    // (and duplicate the "cancelled" system comment). So the owner is the
+    // sole releaser whenever a run was actually in flight; we just ask it to
+    // stop and get out of the way.
+    addComment(db, taskId, 'system', 'Cancellation requested — the in-flight run will stop.');
+    return;
+  }
+  // No in-flight run (e.g. awaiting_approval, or the run already finished) —
+  // nothing is going to release the lock/worktree/phase on its own, so do it
+  // here, defensively.
+  if (task.agent_phase === 'done' || task.agent_phase === 'failed') return;
   releaseLock(db, `agent:${taskId}`);
   const repo = getRepo(db, task.repo_id);
   if (repo && task.worktree_path) cleanupWorktree(repo.path, task.worktree_path);

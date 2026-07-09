@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
-import { openDb, addRepo, getTask, reconcile, setAgentFields } from '../src/store.js';
+import { openDb, addRepo, getTask, reconcile, setAgentFields, activeRunIdForTask, acquireLock, releaseLock } from '../src/store.js';
 import { makeRouter } from '../src/routes.js';
 
 const STUB = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'stub-claude.js');
@@ -142,6 +142,55 @@ test('cancel from awaiting_approval releases the lock, cleans the worktree, mark
   assert.equal(approveRes.status, 409);
   await new Promise((r) => setTimeout(r, 100));
   assert.equal(getTask(db, id).agent_phase, 'failed');
+  server.close();
+});
+
+test('cancel while a run is in-flight delegates lock release + worktree cleanup to the owning run (no double-release)', async () => {
+  const { db, base, repoId, server } = await boot();
+  const { dispatch, cancel } = await import('../src/dispatch.js?d1');
+  const { id } = await (await fetch(`${base}/api/tasks`, { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ title: 'Cancel mid-flight', source_channel: 'C', source_ts: '2.6' }) })).json();
+  const lockHeld = () => !!db.prepare('SELECT 1 FROM meta WHERE key = ?').get(`lock:agent:${id}`);
+
+  // Call dispatch directly (not via the fire-and-forget HTTP route) and DON'T
+  // await it yet: doDispatch runs synchronously (worktree creation, lock
+  // acquire, agent_phase -> 'diagnosing', run row insert + child spawn) up to
+  // its first await (the pending spawnAgent promise). So calling cancel()
+  // synchronously right after is guaranteed — no polling/timing race — to see
+  // the run as in-flight, with the same live child cancelRun's active-run map
+  // is tracking.
+  const dispatchPromise = dispatch(db, id, { repo_id: repoId, mode: 'code' });
+  assert.equal(getTask(db, id).agent_phase, 'diagnosing');
+  const runId = activeRunIdForTask(db, id);
+  assert.ok(runId, 'run should already be registered as in-flight');
+  assert.equal(lockHeld(), true);
+
+  cancel(db, id);
+
+  // cancel() found and killed a live run, so it must NOT touch phase/lock/
+  // worktree itself — only post the "stopping" comment and step back.
+  let t = getTask(db, id);
+  assert.equal(t.agent_phase, 'diagnosing', 'cancel must not set phase itself when delegating to the owner');
+  assert.ok(t.comments.some((c) => c.author === 'system' && /cancellation requested/i.test(c.body)));
+  assert.equal(lockHeld(), true, 'lock is still held by the owning run, not double-released yet');
+
+  await dispatchPromise; // the killed child's 'close' event resolves spawnAgent; doDispatch's own finally now runs
+
+  t = getTask(db, id);
+  assert.equal(t.agent_phase, 'failed');
+  assert.equal(fs.existsSync(t.worktree_path), false, 'worktree cleaned up by the owning run, not by cancel');
+  assert.equal(lockHeld(), false, 'lock released exactly once, by the owner');
+
+  // Lock is free (not leaked): a fresh acquire succeeds.
+  assert.equal(acquireLock(db, `agent:${id}`), true);
+  releaseLock(db, `agent:${id}`);
+
+  // And the task can be dispatched again exactly once.
+  const dispatchRes2 = await fetch(`${base}/api/tasks/${id}/dispatch`, { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ repo_id: repoId, mode: 'code' }) });
+  assert.equal(dispatchRes2.status, 200);
+  for (let i = 0; i < 100; i++) { t = getTask(db, id); if (t.agent_phase === 'awaiting_approval') break; await new Promise((r) => setTimeout(r, 50)); }
+  assert.equal(t.agent_phase, 'awaiting_approval', 'redispatch after cancel settles works exactly once');
   server.close();
 });
 
