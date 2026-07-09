@@ -5,6 +5,7 @@ import config from './src/config.js';
 import { openDb, reconcile } from './src/store.js';
 import { makeRouter } from './src/routes.js';
 import { startSchedules, runReply } from './src/cron.js';
+import { dispatch } from './src/dispatch.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const db = openDb(config.DB_PATH);
@@ -13,10 +14,11 @@ const db = openDb(config.DB_PATH);
 reconcile(db);
 
 const onCommentAgent = (id) => runReply(db, id);
+const onDispatch = (id, body) => dispatch(db, id, body);
 
 const app = express();
 app.use(express.json());
-app.use(makeRouter(db, { onCommentAgent }));
+app.use(makeRouter(db, { onCommentAgent, onDispatch }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.listen(config.PORT, config.HOST, () => {

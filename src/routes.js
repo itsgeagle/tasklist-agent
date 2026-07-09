@@ -2,7 +2,7 @@ import express from 'express';
 import * as store from './store.js';
 import { validateRepo } from './repos.js';
 
-export function makeRouter(db, { onCommentAgent } = {}) {
+export function makeRouter(db, { onCommentAgent, onDispatch } = {}) {
   const r = express.Router();
 
   r.get('/api/tasks', (req, res) => {
@@ -58,6 +58,18 @@ export function makeRouter(db, { onCommentAgent } = {}) {
     }
   });
   r.delete('/api/repos/:id', (req, res) => { store.removeRepo(db, Number(req.params.id)); res.json({ ok: true }); });
+
+  r.post('/api/tasks/:id/dispatch', (req, res) => {
+    const id = Number(req.params.id);
+    const task = store.getTask(db, id);
+    if (!task) return res.status(404).json({ error: 'not found' });
+    if (task.agent_phase && !['idle', 'done', 'failed'].includes(task.agent_phase))
+      return res.status(409).json({ error: 'agent already active on this task' });
+    const { repo_id, base_branch, mode } = req.body || {};
+    if (!repo_id) return res.status(400).json({ error: 'repo_id required' });
+    if (onDispatch) setImmediate(() => onDispatch(id, { repo_id, base_branch, mode }));
+    res.json({ ok: true });
+  });
 
   return r;
 }

@@ -23,6 +23,12 @@ async function main() {
     process.stdout.write(JSON.stringify({ result: 'replied' }));
   } else if (/DIGEST/.test(prompt)) {
     process.stdout.write(JSON.stringify({ result: 'digest posted' }));
+  } else if (/DIAGNOSE task_id=(\d+)/.test(prompt)) {
+    const id = prompt.match(/DIAGNOSE task_id=(\d+)/)[1];
+    await fetch(`${api}/api/tasks/${id}/comments`, { method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ author: 'agent', body: 'Root cause: X. Plan: change file Y.' }) });
+    process.stdout.write(JSON.stringify({ result: 'diagnosed' }));
   } else {
     process.stdout.write(JSON.stringify({ result: 'noop' }));
   }
