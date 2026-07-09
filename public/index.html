@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tasklist</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.5 system-ui, sans-serif; margin: 0; background: Canvas; color: CanvasText; }
+  header { padding: 12px 20px; border-bottom: 1px solid #8884; display: flex; gap: 16px; align-items: center; }
+  h1 { font-size: 18px; margin: 0; }
+  .banner { background: #c0392b; color: #fff; padding: 6px 20px; font-size: 13px; display: none; }
+  main { max-width: 820px; margin: 0 auto; padding: 20px; }
+  .task { border: 1px solid #8884; border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; }
+  .task.done { opacity: .55; }
+  .row { display: flex; gap: 10px; align-items: flex-start; }
+  .title { font-weight: 600; flex: 1; }
+  .src a { font-size: 12px; color: #4a90d9; text-decoration: none; }
+  .thread { margin: 10px 0 0 26px; border-left: 2px solid #8884; padding-left: 10px; }
+  .cmt { margin: 6px 0; }
+  .cmt .who { font-weight: 600; font-size: 12px; text-transform: uppercase; opacity: .7; }
+  .cmt.agent .who { color: #27ae60; }
+  form.add { margin-top: 8px; display: flex; gap: 6px; }
+  input[type=text] { flex: 1; padding: 6px 8px; border: 1px solid #8886; border-radius: 6px; background: Field; color: FieldText; }
+  button { padding: 6px 10px; border: 1px solid #8886; border-radius: 6px; background: ButtonFace; color: ButtonText; cursor: pointer; }
+  .spin { font-size: 12px; color: #27ae60; }
+  .tabs button.active { font-weight: 700; text-decoration: underline; }
+</style>
+</head>
+<body>
+<header>
+  <h1>tasklist</h1>
+  <span class="tabs">
+    <button data-status="open" class="active">Open</button>
+    <button data-status="done">Done</button>
+    <button data-status="all">All</button>
+  </span>
+</header>
+<div class="banner" id="banner"></div>
+<main id="list">Loading…</main>
+<script>
+let status = 'open';
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+
+async function loadStatusBanner() {
+  const s = await (await fetch('/api/status')).json();
+  const b = document.getElementById('banner');
+  const bad = s.ingest && s.ingest.status === 'failed';
+  b.style.display = bad ? 'block' : 'none';
+  if (bad) b.textContent = 'Last Slack ingest failed — ' + (s.ingest.finished_at || '');
+}
+
+function taskHtml(t) {
+  const cmts = (t.comments || []).map((c) =>
+    `<div class="cmt ${c.author}"><span class="who">${esc(c.author)}</span> ${esc(c.body)}</div>`).join('');
+  const src = t.source_permalink ? `<div class="src"><a href="${esc(t.source_permalink)}" target="_blank">source ↗</a></div>` : '';
+  const spin = t.active_run ? '<span class="spin">● claude working…</span>' : '';
+  return `<div class="task ${t.status}" data-id="${t.id}">
+    <div class="row">
+      <input type="checkbox" ${t.status==='done'?'checked':''} onchange="toggle(${t.id}, this.checked)">
+      <div class="title">${esc(t.title)} ${spin}</div>
+    </div>
+    ${t.detail ? `<div>${esc(t.detail)}</div>` : ''}
+    ${src}
+    <div class="thread">${cmts}</div>
+    <form class="add" onsubmit="return comment(event, ${t.id})">
+      <input type="text" name="body" placeholder="Comment, or @claude for help…" autocomplete="off">
+      <button type="submit">Send</button>
+    </form>
+  </div>`;
+}
+
+async function render() {
+  const tasks = await (await fetch('/api/tasks?status=' + status)).json();
+  document.getElementById('list').innerHTML =
+    tasks.length ? tasks.map(taskHtml).join('') : '<p>No tasks.</p>';
+}
+
+async function toggle(id, done) {
+  await fetch('/api/tasks/' + id, { method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ status: done ? 'done' : 'open' }) });
+  render();
+}
+
+async function comment(e, id) {
+  e.preventDefault();
+  const input = e.target.body;
+  const body = input.value.trim();
+  if (!body) return false;
+  const ask = /@claude\b/i.test(body);
+  input.value = '';
+  await fetch('/api/tasks/' + id + '/comments', { method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ author: 'me', body, ask_agent: ask }) });
+  render();
+  return false;
+}
+
+document.querySelectorAll('.tabs button').forEach((b) => b.onclick = () => {
+  status = b.dataset.status;
+  document.querySelectorAll('.tabs button').forEach((x) => x.classList.remove('active'));
+  b.classList.add('active');
+  render();
+});
+
+render();
+loadStatusBanner();
+setInterval(() => { render(); loadStatusBanner(); }, 3000);
+</script>
+</body>
+</html>
