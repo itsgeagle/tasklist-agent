@@ -39,9 +39,15 @@ cp .env.example .env        # then edit: SLACK_USER_TOKEN=..., DISCORD_WEBHOOK_U
 ./setup.sh                  # writes /etc/hosts + pf redirect (sudo), installs the launchd agent
 ```
 
-`setup.sh` also pins an absolute `CLAUDE_BIN` into `.env` and a working `PATH` into the
-launchd plist so the always-on service can find `claude`/`node`. Then open
-**http://tasklist** (fallback if you skip the `pf` step: **http://tasklist:8787**).
+`setup.sh` also pins an absolute `CLAUDE_BIN` and `TASKLIST_API=http://tasklist` into
+`.env`, and a working `PATH` into the launchd plist so the always-on service can find
+`claude`/`node`. Then open **http://tasklist**.
+
+> **Use `http://tasklist`, not `:8787`.** Once the `pf` redirect (80 → 8787) is
+> active, macOS blackholes *direct* connections to `127.0.0.1:8787` — so
+> `http://tasklist:8787` and localhost curls hang. Everything (browser, and the
+> agent's own API calls via `TASKLIST_API`) goes through `http://tasklist`. If you
+> skip the `pf` step entirely, `http://tasklist:8787` works as the direct fallback.
 
 ## Updating (after editing code)
 

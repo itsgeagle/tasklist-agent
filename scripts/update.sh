@@ -30,18 +30,18 @@ else
   echo "Reloaded $LABEL."
 fi
 
-# Confirm it comes back up and is serving the new code.
-ok=0
+# Confirm it comes back up. Probe http://tasklist first — the pf redirect
+# blackholes direct 127.0.0.1:PORT, so that only works if pf isn't set up.
+ok=0; where=""
 for _ in $(seq 1 12); do
-  if curl -fsS -o /dev/null "http://127.0.0.1:$PORT/api/status" 2>/dev/null; then
-    ok=1; break
-  fi
+  if curl -fsS -o /dev/null "http://tasklist/api/status" 2>/dev/null; then ok=1; where="http://tasklist"; break; fi
+  if curl -fsS -o /dev/null "http://127.0.0.1:$PORT/api/status" 2>/dev/null; then ok=1; where="http://127.0.0.1:$PORT"; break; fi
   sleep 0.5
 done
 if [ "$ok" = 1 ]; then
-  echo "Serving latest code on http://127.0.0.1:$PORT"
+  echo "Serving latest code at $where"
 else
-  echo "WARNING: no response on :$PORT yet — check $DIR/logs/err.log" >&2
+  echo "WARNING: no response via http://tasklist or :$PORT yet — check $DIR/logs/err.log" >&2
 fi
 
 # Flag (or with --kill-strays, stop) other server.js listeners on different

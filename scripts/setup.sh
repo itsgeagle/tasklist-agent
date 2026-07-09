@@ -31,6 +31,16 @@ else
   echo "WARNING: 'claude' not found on PATH — set CLAUDE_BIN in .env manually." >&2
 fi
 
+# 1c. TASKLIST_API — the agent posts tasks back to the local API. The pf redirect
+# below (80 -> PORT) has a macOS side effect: direct connections to 127.0.0.1:PORT
+# get blackholed, so the agent must reach the API via http://tasklist (port 80 ->
+# redirect -> PORT), which works. Pin it so agent runs don't hang on localhost.
+if grep -q '^TASKLIST_API=' "$DIR/.env" 2>/dev/null; then
+  sed -i '' -e "s#^TASKLIST_API=.*#TASKLIST_API=http://tasklist#" "$DIR/.env"
+else
+  echo "TASKLIST_API=http://tasklist" >> "$DIR/.env"
+fi
+
 # 2. hosts entry (idempotent)
 if ! grep -q "[[:space:]]tasklist$" /etc/hosts; then
   echo "127.0.0.1 tasklist" | sudo tee -a /etc/hosts >/dev/null
