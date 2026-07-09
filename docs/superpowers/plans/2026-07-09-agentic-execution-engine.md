@@ -852,13 +852,12 @@ app.use(makeRouter(db, {
 }));
 ```
 
-- [ ] **Step 5: Add an EXECUTE branch to `bin/stub-claude.js`** — before the final `else`:
+- [ ] **Step 5: Add an EXECUTE branch to `bin/stub-claude.js`** — the file is ESM, so add these imports at the TOP of `bin/stub-claude.js` (do NOT use `require`, which is undefined in ESM): `import { execSync } from 'node:child_process';` and `import fs from 'node:fs';`. Then add this branch before the final `else`:
 
 ```js
   } else if (/EXECUTE task_id=(\d+)/.test(prompt)) {
     const id = prompt.match(/EXECUTE task_id=(\d+)/)[1];
-    const { execSync } = require('node:child_process');
-    require('fs').writeFileSync('fix.txt', 'fixed');       // cwd is the worktree
+    fs.writeFileSync('fix.txt', 'fixed');                  // cwd is the worktree
     execSync('git add -A && git commit --no-gpg-sign -m "fix" ', { stdio: 'ignore' });
     await fetch(`${api}/api/tasks/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ pr_url: 'local-branch:agent/task-' + id }) });
