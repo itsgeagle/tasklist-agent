@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import config from './src/config.js';
 import { openDb } from './src/store.js';
 import { makeRouter } from './src/routes.js';
+import { startSchedules } from './src/cron.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const db = openDb(config.DB_PATH);
@@ -18,4 +19,5 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 app.listen(config.PORT, config.HOST, () => {
   console.log(`tasklist listening on http://${config.HOST}:${config.PORT}`);
+  startSchedules(db);
 });
