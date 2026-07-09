@@ -39,6 +39,20 @@ export function openDb(dbPath) {
     );
     CREATE TABLE IF NOT EXISTS meta ( key TEXT PRIMARY KEY, value TEXT );
   `);
+  db.exec(`CREATE TABLE IF NOT EXISTS repos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    path TEXT NOT NULL UNIQUE,
+    default_branch TEXT NOT NULL,
+    added_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );`);
+  for (const [col, def] of [
+    ['repo_id', 'INTEGER'], ['agent_mode', 'TEXT'], ['base_branch', 'TEXT'],
+    ['agent_phase', "TEXT NOT NULL DEFAULT 'idle'"], ['worktree_path', 'TEXT'], ['pr_url', 'TEXT'],
+  ]) {
+    const exists = db.prepare(`SELECT 1 FROM pragma_table_info('tasks') WHERE name = ?`).get(col);
+    if (!exists) db.exec(`ALTER TABLE tasks ADD COLUMN ${col} ${def}`);
+  }
   return db;
 }
 
@@ -165,4 +179,34 @@ export function reconcile(db) {
     "log = COALESCE(log,'') || '[reconciled: interrupted at boot]' " +
     "WHERE status='running'"
   ).run();
+}
+
+export function addRepo(db, { name, path, default_branch }) {
+  const info = db.prepare('INSERT INTO repos (name, path, default_branch) VALUES (?, ?, ?)')
+    .run(name, path, default_branch);
+  return { id: info.lastInsertRowid };
+}
+export function listRepos(db) { return db.prepare('SELECT * FROM repos ORDER BY name').all(); }
+export function getRepo(db, id) { return db.prepare('SELECT * FROM repos WHERE id = ?').get(id) || null; }
+export function removeRepo(db, id) { db.prepare('DELETE FROM repos WHERE id = ?').run(id); }
+
+export function setAgentFields(db, taskId, fields) {
+  const allowed = ['repo_id', 'agent_mode', 'base_branch', 'agent_phase', 'worktree_path', 'pr_url'];
+  const sets = allowed.filter((k) => k in fields);
+  if (sets.length) {
+    const clause = sets.map((k) => `${k} = @${k}`).join(', ');
+    db.prepare(`UPDATE tasks SET ${clause}, updated_at = datetime('now') WHERE id = @id`)
+      .run({ ...fields, id: taskId });
+  }
+  return db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) || null;
+}
+export function activeAgentRuns(db) {
+  return db.prepare("SELECT COUNT(*) n FROM runs WHERE status='running' AND kind IN ('diagnose','execute')").get().n;
+}
+export function activeRunIdForTask(db, taskId) {
+  const r = db.prepare("SELECT id FROM runs WHERE task_id = ? AND status='running' ORDER BY id DESC LIMIT 1").get(taskId);
+  return r ? r.id : null;
+}
+export function agentRunsToday(db) {
+  return db.prepare("SELECT COUNT(*) n FROM runs WHERE kind IN ('diagnose','execute') AND date(started_at)=date('now')").get().n;
 }

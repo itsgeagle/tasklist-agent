@@ -1,5 +1,6 @@
 import express from 'express';
 import * as store from './store.js';
+import { validateRepo } from './repos.js';
 
 export function makeRouter(db, { onCommentAgent } = {}) {
   const r = express.Router();
@@ -39,6 +40,24 @@ export function makeRouter(db, { onCommentAgent } = {}) {
   r.get('/api/status', (_req, res) => {
     res.json({ ingest: store.latestRun(db, 'ingest'), digest: store.latestRun(db, 'digest') });
   });
+
+  r.get('/api/repos', (_req, res) => res.json(store.listRepos(db)));
+  r.post('/api/repos', (req, res) => {
+    const { path: repoPath, name } = req.body || {};
+    if (!repoPath) return res.status(400).json({ error: 'path required' });
+    const v = validateRepo(repoPath);
+    if (!v.ok) return res.status(400).json({ error: v.error });
+    try {
+      const { id } = store.addRepo(db, {
+        name: name || repoPath.split('/').filter(Boolean).pop(),
+        path: repoPath, default_branch: v.default_branch,
+      });
+      res.json({ id });
+    } catch (e) {
+      res.status(409).json({ error: String(e.message || e) });
+    }
+  });
+  r.delete('/api/repos/:id', (req, res) => { store.removeRepo(db, Number(req.params.id)); res.json({ ok: true }); });
 
   return r;
 }

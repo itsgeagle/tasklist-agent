@@ -15,4 +15,8 @@ export default {
   SLACK_USER_TOKEN: process.env.SLACK_USER_TOKEN || '',
   DISCORD_WEBHOOK_URL: process.env.DISCORD_WEBHOOK_URL || '',
   API_BASE: process.env.TASKLIST_API || `http://127.0.0.1:${PORT}`,
+  WORKTREE_DIR: process.env.WORKTREE_DIR || path.join(ROOT, 'data', 'worktrees'),
+  MAX_AGENT_CONCURRENCY: Number(process.env.MAX_AGENT_CONCURRENCY || 2),
+  DIAGNOSE_TIMEOUT_MS: Number(process.env.DIAGNOSE_TIMEOUT_MS || 600000),
+  EXECUTE_TIMEOUT_MS: Number(process.env.EXECUTE_TIMEOUT_MS || 2700000),
 };
