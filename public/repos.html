@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tasklist · repos</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.5 system-ui, sans-serif; margin: 0; background: Canvas; color: CanvasText; }
+  header { padding: 12px 20px; border-bottom: 1px solid #8884; }
+  a { color: #4a90d9; } main { max-width: 720px; margin: 0 auto; padding: 20px; }
+  .repo { display: flex; gap: 10px; align-items: center; border: 1px solid #8884; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
+  .repo .path { flex: 1; font-family: ui-monospace, monospace; font-size: 13px; }
+  input { flex: 1; padding: 6px 8px; border: 1px solid #8886; border-radius: 6px; background: Field; color: FieldText; }
+  button { padding: 6px 10px; border: 1px solid #8886; border-radius: 6px; background: ButtonFace; color: ButtonText; cursor: pointer; }
+  form { display: flex; gap: 6px; margin-bottom: 16px; }
+</style></head>
+<body>
+<header><a href="/">&larr; tasks</a> &nbsp; <strong>Allowed repos</strong></header>
+<main>
+  <form onsubmit="return addRepo(event)">
+    <input type="text" id="path" placeholder="/absolute/path/to/repo" autocomplete="off">
+    <button type="submit">Add</button>
+  </form>
+  <div id="list">Loading…</div>
+</main>
+<script>
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+async function render() {
+  const repos = await (await fetch('/api/repos')).json();
+  document.getElementById('list').innerHTML = repos.length
+    ? repos.map((x) => `<div class="repo"><span class="path">${esc(x.path)}</span>
+        <span>${esc(x.default_branch)}</span>
+        <button onclick="del(${x.id})">Remove</button></div>`).join('')
+    : '<p>No repos yet. Add one above.</p>';
+}
+async function addRepo(e) {
+  e.preventDefault();
+  const path = document.getElementById('path').value.trim();
+  if (!path) return false;
+  const res = await fetch('/api/repos', { method: 'POST',
+    headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path }) });
+  if (!res.ok) alert((await res.json()).error || 'failed');
+  else { document.getElementById('path').value = ''; render(); }
+  return false;
+}
+async function del(id) { await fetch('/api/repos/' + id, { method: 'DELETE' }); render(); }
+render();
+</script>
+</body></html>
