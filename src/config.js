@@ -11,6 +11,11 @@ export default {
   HOST: '127.0.0.1',
   DB_PATH: process.env.DB_PATH || path.join(ROOT, 'data', 'tasks.db'),
   LOG_DIR: path.join(ROOT, 'logs'),
+  // Tunable "who I am / what's relevant" context injected into ingest/reply
+  // prompts. context.md is gitignored (personal); context.example.md is the
+  // committed template used as a fallback.
+  CONTEXT_PATH: process.env.CONTEXT_PATH || path.join(ROOT, 'context.md'),
+  CONTEXT_EXAMPLE_PATH: path.join(ROOT, 'context.example.md'),
   CLAUDE_BIN: process.env.CLAUDE_BIN || 'claude',
   SLACK_USER_TOKEN: process.env.SLACK_USER_TOKEN || '',
   DISCORD_WEBHOOK_URL: process.env.DISCORD_WEBHOOK_URL || '',

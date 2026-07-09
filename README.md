@@ -76,8 +76,13 @@ The automated suite exercises a stubbed `claude`; these only surface on a live r
 
 ## Tunables
 
+- **Who you are / what Slack is relevant to you:** `context.md` (gitignored; copy of
+  `context.example.md`). The ingest agent reads it every run — no restart needed — to
+  decide which messages (direct mentions, `@channel`/`@here`, and role-relevant
+  threads even when you're not tagged) become tasks.
 - Schedules: `src/cron.js` (`*/30 * * * *` ingest, `0 8 * * *` digest).
 - What counts as an action item / digest format: `src/prompts.js`.
+- Run timeouts: `INGEST_TIMEOUT_MS` / `DIGEST_TIMEOUT_MS` in `.env` (default 10 min).
 - Port: `PORT` in `.env` (default 8787).
 
 ## Uninstall
