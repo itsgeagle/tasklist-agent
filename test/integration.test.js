@@ -62,3 +62,13 @@ test('commenting @claude spawns a reply run that posts an agent comment', async 
   assert.ok(t.comments.some((c) => c.author === 'agent'), 'agent comment posted');
   server.close();
 });
+
+test('digest run completes ok via stub', async () => {
+  const db = openDb(':memory:');
+  process.env.CLAUDE_BIN = STUB;
+  process.env.TASKLIST_API = 'http://127.0.0.1:1'; // stub does not call it for DIGEST
+  const { runDigest } = await import('../src/cron.js?digest');
+  await runDigest(db);
+  const { latestRun } = await import('../src/store.js');
+  assert.equal(latestRun(db, 'digest').status, 'ok');
+});
