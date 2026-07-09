@@ -2,8 +2,20 @@ import express from 'express';
 import * as store from './store.js';
 import { validateRepo } from './repos.js';
 
-export function makeRouter(db, { onCommentAgent, onDispatch, onApprove, onCancel } = {}) {
+const JOBS = ['ingest', 'digest'];
+
+export function makeRouter(db, { onCommentAgent, onDispatch, onApprove, onCancel, onRunJob } = {}) {
   const r = express.Router();
+
+  // Manually trigger a scheduled job. runIngest/runDigest each take a lock and
+  // no-op if that job is already in flight, so this is safe against a concurrent
+  // scheduled run or a double-click. Fire-and-forget like dispatch/reply.
+  r.post('/api/run/:job', (req, res) => {
+    const { job } = req.params;
+    if (!JOBS.includes(job)) return res.status(400).json({ error: 'unknown job' });
+    if (onRunJob) setImmediate(() => Promise.resolve(onRunJob(job)).catch((e) => console.error('[onRunJob] failed', e)));
+    res.json({ ok: true });
+  });
 
   r.get('/api/tasks', (req, res) => {
     res.json(store.listTasks(db, req.query.status || 'open'));

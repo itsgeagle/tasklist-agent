@@ -63,6 +63,28 @@ test('commenting @claude spawns a reply run that posts an agent comment', async 
   server.close();
 });
 
+test('manual run route triggers the job callback and rejects unknown jobs', async () => {
+  const db = openDb(':memory:');
+  const calls = [];
+  const app = express();
+  app.use(express.json());
+  app.use(makeRouter(db, { onRunJob: (job) => calls.push(job) }));
+  const server = await new Promise((res) => { const s = app.listen(0, () => res(s)); });
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  const ing = await fetch(`${base}/api/run/ingest`, { method: 'POST' });
+  assert.equal(ing.status, 200);
+  const dig = await fetch(`${base}/api/run/digest`, { method: 'POST' });
+  assert.equal(dig.status, 200);
+  const bad = await fetch(`${base}/api/run/bogus`, { method: 'POST' });
+  assert.equal(bad.status, 400);
+
+  // onRunJob fires via setImmediate; let the event loop drain.
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(calls, ['ingest', 'digest']);
+  server.close();
+});
+
 test('digest run completes ok via stub', async () => {
   const db = openDb(':memory:');
   process.env.CLAUDE_BIN = STUB;

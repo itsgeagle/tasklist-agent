@@ -38,8 +38,13 @@
     <button data-status="done">Done</button>
     <button data-status="all">All</button>
   </span>
-  <a href="/repos.html" style="margin-left:auto;color:#4a90d9;font-size:13px;">Repos</a>
-  <span id="usage" style="font-size:12px;opacity:.7;margin-left:12px;"></span>
+  <span class="runjobs" style="margin-left:auto;display:flex;gap:6px;align-items:center;">
+    <button id="run-ingest" onclick="runJob('ingest', this)">Pull Slack</button>
+    <button id="run-digest" onclick="runJob('digest', this)">Run digest</button>
+    <span id="jobstatus" style="font-size:12px;opacity:.7;"></span>
+  </span>
+  <a href="/repos.html" style="color:#4a90d9;font-size:13px;">Repos</a>
+  <span id="usage" style="font-size:12px;opacity:.7;"></span>
 </header>
 <div class="banner" id="banner"></div>
 <main id="list">Loading…</main>
@@ -53,8 +58,21 @@ async function loadStatusBanner() {
   const bad = s.ingest && s.ingest.status === 'failed';
   b.style.display = bad ? 'block' : 'none';
   if (bad) b.textContent = 'Last Slack ingest failed — ' + (s.ingest.finished_at || '');
+  const fmt = (r) => r ? `${r.status}${r.finished_at ? ' · ' + r.finished_at.slice(11, 16) : ''}` : '—';
+  document.getElementById('jobstatus').textContent =
+    `ingest: ${fmt(s.ingest)} · digest: ${fmt(s.digest)}`;
   const u = await (await fetch('/api/usage')).json();
   document.getElementById('usage').textContent = `agents: ${u.active}/${u.cap} · ${u.today} today`;
+}
+
+async function runJob(job, btn) {
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = job === 'ingest' ? 'Pulling…' : 'Running…';
+  try {
+    await fetch('/api/run/' + job, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+  } catch (e) { /* status label reflects real run state on next poll */ }
+  setTimeout(() => { btn.disabled = false; btn.textContent = label; loadStatusBanner(); }, 1500);
 }
 
 function taskHtml(t) {

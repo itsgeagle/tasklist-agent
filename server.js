@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import config from './src/config.js';
 import { openDb, reconcile } from './src/store.js';
 import { makeRouter } from './src/routes.js';
-import { startSchedules, runReply } from './src/cron.js';
+import { startSchedules, runReply, runIngest, runDigest } from './src/cron.js';
 import { dispatch, approve, cancel } from './src/dispatch.js';
 import { cleanupWorktree } from './src/worktree.js';
 
@@ -26,10 +26,11 @@ const onCommentAgent = (id) => runReply(db, id);
 const onDispatch = (id, body) => dispatch(db, id, body);
 const onApprove = (id, plan) => approve(db, id, { plan });
 const onCancel = (id) => cancel(db, id);
+const onRunJob = (job) => (job === 'ingest' ? runIngest(db) : runDigest(db));
 
 const app = express();
 app.use(express.json());
-app.use(makeRouter(db, { onCommentAgent, onDispatch, onApprove, onCancel }));
+app.use(makeRouter(db, { onCommentAgent, onDispatch, onApprove, onCancel, onRunJob }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.listen(config.PORT, config.HOST, () => {
