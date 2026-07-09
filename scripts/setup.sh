@@ -37,11 +37,22 @@ if ! grep -q "[[:space:]]tasklist$" /etc/hosts; then
   echo "Added 'tasklist' to /etc/hosts"
 fi
 
-# 3. pf redirect 80 -> PORT (idempotent anchor)
+# 3. pf redirect 80 -> PORT (idempotent).
+# macOS pf only evaluates redirect (rdr) rules through an *rdr-anchor*; a plain
+# filter `anchor` loads them but never runs them during translation, so port 80
+# is never redirected. pf's grammar also requires rdr-anchor lines to precede
+# filter anchors, so we insert rdr-anchor right after com.apple's rather than
+# appending it. The `load anchor` (which loads the rule set) can go at the end.
 ANCHOR="/etc/pf.anchors/tasklist"
 echo "rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 80 -> 127.0.0.1 port $PORT" | sudo tee "$ANCHOR" >/dev/null
-if ! grep -q 'anchor "tasklist"' /etc/pf.conf; then
-  echo 'anchor "tasklist"' | sudo tee -a /etc/pf.conf >/dev/null
+# Drop a stale plain `anchor "tasklist"` from older setups (harmless but misleading).
+sudo sed -i '' '/^anchor "tasklist"$/d' /etc/pf.conf
+if ! grep -q 'rdr-anchor "tasklist"' /etc/pf.conf; then
+  sudo sed -i '' -e '/^rdr-anchor "com.apple\/\*"/a\
+rdr-anchor "tasklist"
+' /etc/pf.conf
+fi
+if ! grep -q 'load anchor "tasklist"' /etc/pf.conf; then
   echo 'load anchor "tasklist" from "/etc/pf.anchors/tasklist"' | sudo tee -a /etc/pf.conf >/dev/null
 fi
 sudo pfctl -f /etc/pf.conf >/dev/null 2>&1 || true
