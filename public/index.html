@@ -25,6 +25,9 @@
   button { padding: 6px 10px; border: 1px solid #8886; border-radius: 6px; background: ButtonFace; color: ButtonText; cursor: pointer; }
   .spin { font-size: 12px; color: #27ae60; }
   .tabs button.active { font-weight: 700; text-decoration: underline; }
+  .pill { font-size: 11px; padding: 2px 6px; border-radius: 10px; border: 1px solid #8886; margin-left: 6px; }
+  .pill.executing, .pill.diagnosing { color: #d68910; } .pill.done { color: #27ae60; } .pill.failed { color: #c0392b; }
+  .agentbar { margin: 8px 0 0 26px; display: flex; gap: 6px; align-items: center; }
 </style>
 </head>
 <body>
@@ -56,14 +59,31 @@ function taskHtml(t) {
     `<div class="cmt ${esc(c.author)}"><span class="who">${esc(c.author)}</span> ${esc(c.body)}</div>`).join('');
   const src = t.source_permalink ? `<div class="src"><a href="${esc(t.source_permalink)}" target="_blank">source ↗</a></div>` : '';
   const spin = t.active_run ? '<span class="spin">● claude working…</span>' : '';
+
+  const phase = t.agent_phase || 'idle';
+  const pill = phase !== 'idle'
+    ? `<span class="pill ${phase}">${esc(phase.replace('_',' '))}</span>` : '';
+  const pr = t.pr_url ? `<div class="src">PR: ${esc(t.pr_url)}</div>` : '';
+  const approveBar = phase === 'awaiting_approval'
+    ? `<div class="agentbar">
+         <button onclick="approve(${t.id})">Approve &amp; execute</button>
+         <button onclick="cancelAgent(${t.id})">Cancel</button>
+       </div>` : '';
+  const busy = ['diagnosing','executing'].includes(phase)
+    ? `<div class="agentbar"><span class="spin">● agent ${esc(phase)}…</span>
+         <button onclick="cancelAgent(${t.id})">Cancel</button></div>` : '';
+  const dispatchBar = ['idle','done','failed'].includes(phase)
+    ? `<div class="agentbar"><button onclick="handToAgent(${t.id})">Hand to agent</button></div>` : '';
+
   return `<div class="task ${t.status}" data-id="${t.id}">
     <div class="row">
       <input type="checkbox" ${t.status==='done'?'checked':''} onchange="toggle(${t.id}, this.checked)">
-      <div class="title">${esc(t.title)} ${spin}</div>
+      <div class="title">${esc(t.title)} ${spin}${pill}</div>
     </div>
     ${t.detail ? `<div>${esc(t.detail)}</div>` : ''}
     ${src}
     <div class="thread">${cmts}</div>
+    ${pr}${approveBar}${busy}${dispatchBar}
     <form class="add" onsubmit="return comment(event, ${t.id})">
       <input type="text" name="body" placeholder="Comment, or @claude for help…" autocomplete="off">
       <button type="submit">Send</button>
@@ -96,6 +116,28 @@ async function comment(e, id) {
     body: JSON.stringify({ author: 'me', body, ask_agent: ask }) });
   render();
   return false;
+}
+
+async function handToAgent(id) {
+  const repos = await (await fetch('/api/repos')).json();
+  if (!repos.length) { alert('Add a repo first (Repos link, top right).'); return; }
+  const choice = prompt('Repo id to use:\n' + repos.map((r) => `${r.id}: ${r.path} (${r.default_branch})`).join('\n'), String(repos[0].id));
+  if (!choice) return;
+  await fetch('/api/tasks/' + id + '/dispatch', { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ repo_id: Number(choice), mode: 'code' }) });
+  render();
+}
+
+async function approve(id) {
+  const edited = prompt('Approve the plan. Optionally edit it (blank = use the posted plan):', '');
+  await fetch('/api/tasks/' + id + '/approve', { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(edited ? { plan: edited } : {}) });
+  render();
+}
+
+async function cancelAgent(id) {
+  await fetch('/api/tasks/' + id + '/cancel', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+  render();
 }
 
 document.querySelectorAll('.tabs button').forEach((b) => b.onclick = () => {
