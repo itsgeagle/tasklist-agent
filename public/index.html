@@ -52,7 +52,7 @@ async function loadStatusBanner() {
 
 function taskHtml(t) {
   const cmts = (t.comments || []).map((c) =>
-    `<div class="cmt ${c.author}"><span class="who">${esc(c.author)}</span> ${esc(c.body)}</div>`).join('');
+    `<div class="cmt ${esc(c.author)}"><span class="who">${esc(c.author)}</span> ${esc(c.body)}</div>`).join('');
   const src = t.source_permalink ? `<div class="src"><a href="${esc(t.source_permalink)}" target="_blank">source ↗</a></div>` : '';
   const spin = t.active_run ? '<span class="spin">● claude working…</span>' : '';
   return `<div class="task ${t.status}" data-id="${t.id}">
