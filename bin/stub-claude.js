@@ -20,8 +20,29 @@ const result = (text) => emit({ type: 'result', subtype: 'success', is_error: fa
 async function main() {
   init();
   if (/INGEST/.test(prompt)) {
-    tool(`curl ${api}/api/tasks`);
-    toolResult('[]');
+    tool(`curl ${api}/api/tasks?status=open`);
+    // Best-effort read: some traces drive ingest against an API-less app, and a
+    // real agent that can't read open tasks simply reconciles nothing.
+    let open = [];
+    try { open = await (await fetch(`${api}/api/tasks?status=open`)).json(); } catch { open = []; }
+    if (!Array.isArray(open)) open = [];
+    toolResult(JSON.stringify(open));
+    for (const t of open) {
+      // simulate a merged-PR sweep: a real (non-placeholder) pr_url → close
+      if (t.pr_url && !String(t.pr_url).startsWith('local-branch:')) {
+        await fetch(`${api}/api/tasks/${t.id}/comments`, { method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ author: 'slack', updated_by: 'slack', body: 'PR merged — closing.' }) });
+        await fetch(`${api}/api/tasks/${t.id}`, { method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ status: 'done', updated_by: 'slack' }) });
+      } else if (t.source_thread_ts) {
+        // simulate a thread update folding into the existing task
+        await fetch(`${api}/api/tasks/${t.id}/comments`, { method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ author: 'slack', updated_by: 'slack', body: 'New reply in this thread.' }) });
+      }
+    }
     for (const t of [
       { title: 'Reply to Sam about launch', source_channel: 'C1', source_ts: '100.1', source_permalink: 'https://slack/x' },
       { title: 'Review PR 42', source_channel: 'C2', source_ts: '200.2' },

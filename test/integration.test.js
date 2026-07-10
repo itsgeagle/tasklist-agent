@@ -34,6 +34,30 @@ test('ingest via stubbed claude creates deduped tasks', async () => {
   server.close();
 });
 
+test('ingest reconciles: thread task gets a slack update, merged-PR task closes', async () => {
+  const { db, server, base } = await bootFull();
+  const mk = (t) => fetch(`${base}/api/tasks`, { method: 'POST',
+    headers: { 'content-type': 'application/json' }, body: JSON.stringify(t) })
+    .then((r) => r.json());
+
+  const threaded = await mk({ title: 'Launch thread', source_channel: 'C9', source_ts: 'T9', source_thread_ts: 'T9' });
+  const merged = await mk({ title: 'Ship fix', source_channel: 'C8', source_ts: '8.8' });
+  await fetch(`${base}/api/tasks/${merged.id}`, { method: 'PATCH',
+    headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pr_url: 'https://github.com/o/r/pull/7' }) });
+
+  const { runIngest } = await import('../src/cron.js?reconcile');
+  await runIngest(db);
+
+  const threadedTask = getTask(db, threaded.id);
+  assert.ok(threadedTask.comments.some((c) => c.author === 'slack'), 'thread task got a slack update');
+  assert.equal(threadedTask.updated_by, 'slack');
+
+  const mergedTask = getTask(db, merged.id);
+  assert.equal(mergedTask.status, 'done', 'merged-PR task was closed');
+  assert.equal(mergedTask.updated_by, 'slack');
+  server.close();
+});
+
 test('commenting @claude spawns a reply run that posts an agent comment', async () => {
   const db = openDb(':memory:');
   const app = express();
