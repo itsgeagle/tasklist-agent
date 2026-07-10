@@ -17,3 +17,12 @@ test('ingest prompt drives incremental reconcile, not blind insert', () => {
   // must stay off the Anthropic API
   assert.match(p, /do NOT use any Anthropic API/i);
 });
+
+test('ingest prompt judges messages in context, not in isolation', () => {
+  const p = ingestPrompt({ apiBase: 'http://api' });
+  // read surrounding conversation, and treat self-resolution as already-handled
+  assert.match(p, /IN CONTEXT/);
+  assert.match(p, /still unresolved as of\s+the latest message|still unresolved/);
+  assert.match(p, /from ME/);
+  assert.match(p, /do NOT create an open one/);
+});

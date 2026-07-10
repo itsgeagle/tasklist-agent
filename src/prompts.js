@@ -50,6 +50,20 @@ Steps:
    c. Messages in my areas of responsibility per the context above (decisions,
       blockers, incidents, requests, questions in my domain) even when untagged.
    Skip pure FYI/social/bot noise and things fully owned by someone else.
+   d. ALWAYS judge a message IN CONTEXT of the surrounding conversation — read the
+      messages before AND after it in that DM/channel/thread, not the one line in
+      isolation. A request is only an OPEN action if it is still unresolved as of
+      the latest message. If a LATER message already resolves it — ESPECIALLY one
+      from ME (I replied "done", "merged", "shipped", "handled", or actually posted
+      the answer/decision it asked for) — then it is NOT open work:
+        - If no task exists for it yet, do NOT create an open one. (If it clearly
+          maps to a real deliverable worth a record, create it and immediately mark
+          it done in the same pass; otherwise just skip it.)
+        - If an open task already exists for it, mark that task done (see step 5).
+      Example: in a DM, someone asks me to merge a PR and two messages later I say
+      "done" — that is already handled; do not surface it as a to-do.
+      If it needs a fetch of a few earlier messages for context, pass a smaller
+      "oldest"/"latest" window to conversations.history for that channel.
 5. RECONCILE each relevant message. Each Slack message has a thread_ts (its own ts
    if it is a thread root). Decide where it belongs:
    a. THREAD MATCH — its thread_ts equals an open task's source_thread_ts:
