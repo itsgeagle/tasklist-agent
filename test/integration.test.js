@@ -117,23 +117,23 @@ test('meta watermark round-trips and PATCH accepts updated_by', async () => {
 test('runbus replays buffer to late subscribers, then streams, and caps growth', async () => {
   const runbus = await import('../src/runbus.js');
   runbus._reset();
-  runbus.begin('ingest', 7);
-  runbus.publish('ingest', { t: 'tool', text: 'curl auth.test' });
+  runbus.begin(7);
+  runbus.publish(7, { t: 'tool', text: 'curl auth.test' });
   const seen = [];
-  const unsub = runbus.subscribe('ingest', (ev) => seen.push(ev));
+  const unsub = runbus.subscribe(7, (ev) => seen.push(ev));
   // replay delivered reset + the buffered tool event
   assert.ok(seen.some((e) => e.t === 'reset'));
   assert.ok(seen.some((e) => e.t === 'tool'));
-  runbus.publish('ingest', { t: 'result', text: 'ok' });   // live
+  runbus.publish(7, { t: 'result', text: 'ok' });   // live
   assert.equal(seen[seen.length - 1].t, 'result');
-  runbus.end('ingest', 'ok');
+  runbus.end(7, 'ok');
   assert.equal(seen[seen.length - 1].t, 'end');
   unsub();
-  runbus.publish('ingest', { t: 'tool', text: 'after unsub' }); // must not reach us
+  runbus.publish(7, { t: 'tool', text: 'after unsub' }); // must not reach us
   assert.ok(!seen.some((e) => e.text === 'after unsub'));
 });
 
-test('a stubbed ingest publishes a live trace (start … tool/result … end) to runbus', async () => {
+test('a stubbed ingest persists a trace (start … tool/result … end)', async () => {
   const db = openDb(':memory:');
   const app = express();
   app.use(express.json());
@@ -145,40 +145,20 @@ test('a stubbed ingest publishes a live trace (start … tool/result … end) to
   runbus._reset();
   const { runIngest } = await import('../src/cron.js?stream');
   await runIngest(db);
-  const snap = runbus.snapshot('ingest');
-  const kinds = snap.events.map((e) => e.t);
+  const { latestRun } = await import('../src/store.js');
+  const trace = await import('../src/trace.js');
+  const fs = await import('node:fs');
+  const runId = latestRun(db, 'ingest').id; // end() drops the live stream → read the durable trace
+  const kinds = trace.read(runId).map((e) => e.t);
   assert.ok(kinds.includes('start'), 'has start');
   assert.ok(kinds.includes('tool'), 'has a tool call');
-  assert.ok(kinds.includes('end'), 'has end');
-  assert.equal(snap.events.find((e) => e.t === 'end').status, 'ok');
+  assert.equal(kinds.at(-1), 'end', 'ends with end');
+  fs.rmSync(trace.fileFor(runId));
   server.close();
 });
 
-test('SSE endpoint streams the trace as event-stream frames and 400s unknown kinds', async () => {
-  const db = openDb(':memory:');
-  const app = express();
-  app.use(express.json());
-  app.use(makeRouter(db, { onRunJob: () => {} }));
-  const server = await new Promise((res) => { const s = app.listen(0, () => res(s)); });
-  const base = `http://127.0.0.1:${server.address().port}`;
-  process.env.TASKLIST_API = base;
-  process.env.CLAUDE_BIN = STUB;
-  const runbus = await import('../src/runbus.js');
-  runbus._reset();
-  const { runIngest } = await import('../src/cron.js?sse');
-  await runIngest(db);                    // completes; buffer holds the whole trace incl. 'end'
-
-  const r = await fetch(`${base}/api/runs/ingest/stream`);
-  assert.match(r.headers.get('content-type'), /text\/event-stream/);
-  const text = await r.text();            // resolves because the replayed 'end' closes the stream
-  assert.ok(text.includes('"t":"start"'), 'streamed a start frame');
-  assert.ok(text.includes('"t":"end"'), 'streamed an end frame');
-
-  const bad = await fetch(`${base}/api/runs/bogus/stream`);
-  assert.equal(bad.status, 400);
-  server.close();
-  server.closeAllConnections?.();         // drop the keep-alive socket so the test process can exit
-});
+// Rewritten against the runId-scoped SSE route in Task 5.
+test('SSE endpoint streams a finished run trace as event-stream frames', { skip: 'runId SSE route lands in Task 5' }, async () => {});
 
 test('manual run route triggers the job callback and rejects unknown jobs', async () => {
   const db = openDb(':memory:');

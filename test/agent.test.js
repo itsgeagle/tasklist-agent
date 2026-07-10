@@ -47,6 +47,22 @@ test('spawnAgent captures cost/token metrics from the result event', async () =>
   assert.equal(r.output_tokens, 50);
 });
 
+test('spawnAgent tees the trace to data/traces/<runId>.jsonl', async () => {
+  const STUB = new URL('../bin/stub-claude.js', import.meta.url).pathname;
+  const { spawnAgent } = await import('../src/agent.js?trace1');
+  const { openDb } = await import('../src/store.js');
+  const trace = await import('../src/trace.js');
+  const db = openDb(':memory:');
+  const res = await spawnAgent(db, { kind: 'digest', prompt: 'DIGEST', tools: ['Bash'], _binOverride: STUB });
+  assert.equal(res.status, 'ok');
+  const evs = trace.read(res.runId);
+  const kinds = evs.map((e) => e.t);
+  assert.ok(kinds.includes('start'), 'has start');
+  assert.equal(evs.at(-1).t, 'end');
+  assert.equal(evs.at(-1).status, 'ok');
+  fs.rmSync(trace.fileFor(res.runId));
+});
+
 test('spawnAgent estimates cost from tokens when total_cost_usd is absent', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-'));
   const stub = path.join(dir, 'stub.js');

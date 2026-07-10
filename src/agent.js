@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import config, { estimateCost } from './config.js';
 import { createRun, finishRun } from './store.js';
 import * as runbus from './runbus.js';
+import * as trace from './trace.js';
 
 const active = new Map(); // runId -> child
 
@@ -48,7 +49,8 @@ function toEvents(obj) {
 
 export function spawnAgent(db, { kind, task_id = null, prompt, tools = ['Bash'], cwd, timeoutMs = 300000, model, _binOverride } = {}) {
   const runId = createRun(db, { kind, task_id });
-  const key = runbus.streamKey({ kind, task_id });
+  trace.prune();                          // opportunistic retention (keep most-recent 500)
+  const emit = (ev) => { runbus.publish(runId, ev); trace.append(runId, ev); };
   return new Promise((resolve) => {
     // Start from a copy of process.env and strip every ANTHROPIC_* var so the
     // child never sees an API key. If it did, `claude` would bill the paid
@@ -75,14 +77,17 @@ export function spawnAgent(db, { kind, task_id = null, prompt, tools = ['Bash'],
     const child = spawn(cmd, argv, { cwd, env: childEnv });
 
     active.set(runId, child);
-    runbus.begin(key, runId);
+    runbus.begin(runId);
+    trace.open(runId);
     let out = '', err = '', done = false, lineBuf = '';
     let resultMeta = {}, runModel = null;
     const finish = (status) => {
       if (done) return; done = true;
       clearTimeout(timer); active.delete(runId);
       finishRun(db, runId, status, (out + err).slice(0, 20000), resultMeta);
-      runbus.end(key, status);
+      runbus.end(runId, status);
+      trace.append(runId, { t: 'end', status });
+      trace.close(runId);
       resolve({ status, log: out + err, runId });
     };
     const timer = setTimeout(() => { child.kill('SIGKILL'); finish('failed'); }, timeoutMs);
@@ -115,11 +120,11 @@ export function spawnAgent(db, { kind, task_id = null, prompt, tools = ['Bash'],
             model: runModel,
           };
         }
-        for (const ev of toEvents(obj)) runbus.publish(key, ev);
+        for (const ev of toEvents(obj)) emit(ev);
       }
     });
-    child.stderr.on('data', (d) => { err += d; runbus.publish(key, { t: 'stderr', text: truncate(String(d), 300) }); });
-    child.on('error', (e) => { err += String(e); runbus.publish(key, { t: 'stderr', text: String(e) }); finish('failed'); });
+    child.stderr.on('data', (d) => { err += d; emit({ t: 'stderr', text: truncate(String(d), 300) }); });
+    child.on('error', (e) => { err += String(e); emit({ t: 'stderr', text: String(e) }); finish('failed'); });
     child.on('close', (code) => finish(code === 0 ? 'ok' : 'failed'));
   });
 }
