@@ -93,7 +93,12 @@ export function listTasks(db, status = 'open') {
   const q = status === 'all'
     ? 'SELECT * FROM tasks ORDER BY status, priority, updated_at DESC'
     : 'SELECT * FROM tasks WHERE status = ? ORDER BY priority, updated_at DESC';
-  return status === 'all' ? db.prepare(q).all() : db.prepare(q).all(status);
+  const rows = status === 'all' ? db.prepare(q).all() : db.prepare(q).all(status);
+  for (const t of rows) {
+    t.comments = listComments(db, t.id);
+    t.active_run = activeRunForTask(db, t.id);
+  }
+  return rows;
 }
 
 export function getTask(db, id) {
