@@ -49,7 +49,7 @@ export async function runReply(db, taskId) {
   if (!task) return;
   if (!acquireLock(db, `reply:${taskId}`)) return;
   try {
-    await spawnAgent(db, { kind: 'reply', task_id: taskId, prompt: replyPrompt({ apiBase: apiBase(), task }), model: config.MODEL_REPLY });
+    await spawnAgent(db, { kind: 'reply', task_id: taskId, prompt: replyPrompt({ apiBase: apiBase(), db, task }), model: config.MODEL_REPLY });
   } finally {
     releaseLock(db, `reply:${taskId}`);
   }

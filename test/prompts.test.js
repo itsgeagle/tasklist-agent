@@ -1,6 +1,24 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ingestPrompt } from '../src/prompts.js';
+import { ingestPrompt, replyPrompt, renderThread, AGENT_RULES } from '../src/prompts.js';
+import { openDb, upsertTask, addComment } from '../src/store.js';
+
+test('renderThread includes task + comments; replyPrompt inlines it, no discovery curl', () => {
+  const db = openDb(':memory:');
+  const { id } = upsertTask(db, { title: 'Ship launch', detail: 'blocking', source_channel: 'C1', source_ts: '1.1' });
+  addComment(db, id, 'me', '@claude summarize this');
+  const thread = renderThread(db, id);
+  assert.ok(thread.includes('Ship launch'));
+  assert.ok(thread.includes('@claude summarize this'));
+  const p = replyPrompt({ apiBase: 'http://api', db, task: { id, title: 'Ship launch' } });
+  assert.ok(p.includes('Ship launch'));                 // thread inlined
+  assert.ok(p.includes(AGENT_RULES));                   // shared preamble
+  assert.ok(!/Fetch the task and its comment thread/i.test(p)); // discovery step gone
+});
+
+test('ingestPrompt carries the shared AGENT_RULES', () => {
+  assert.ok(ingestPrompt({ apiBase: 'http://api' }).includes(AGENT_RULES));
+});
 
 test('ingest prompt drives incremental reconcile, not blind insert', () => {
   const p = ingestPrompt({ apiBase: 'http://api', overlapMs: 600000, bootstrapMs: 604800000 });

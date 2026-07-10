@@ -1,7 +1,35 @@
 import fs from 'node:fs';
 import config from './config.js';
+import { getTask } from './store.js';
 
 const SLACK_SCOPES = 'channels/groups/im/mpim:history, channels/groups/im/mpim:read, users:read, search:read';
+
+// Shared rules preamble reused across every prompt builder so the rules live in one
+// place and can't drift between prompts.
+export const AGENT_RULES =
+  'Use Bash + curl + gh only. Do NOT use any Anthropic API. Do NOT use jq — build JSON with python3.';
+
+export function postCommentRecipe(apiBase, taskId) {
+  return `  curl -s -X POST ${apiBase}/api/tasks/${taskId}/comments -H "content-type: application/json" \\
+    -d "$(python3 -c 'import json,sys;print(json.dumps({"author":"agent","body":sys.argv[1]}))' "<your reply>")"`;
+}
+
+// Compact, server-side rendering of a task + its comment thread, inlined into prompts
+// so the agent needn't spend turns curling for context we already hold in SQLite.
+export function renderThread(db, taskId) {
+  const t = getTask(db, taskId);
+  if (!t) return '(task not found)';
+  const head = [
+    `Task #${t.id}: ${t.title}`,
+    t.detail ? `Detail: ${t.detail}` : null,
+    `Priority: ${t.priority} · Status: ${t.status}`,
+    t.source_permalink ? `Source: ${t.source_permalink}` : null,
+  ].filter(Boolean);
+  const thread = (t.comments || []).map(
+    (c) => `- [${c.author}${c.updated_by && c.updated_by !== c.author ? '/' + c.updated_by : ''} · ${c.created_at || ''}] ${c.body}`,
+  );
+  return [...head, '', 'Comment thread (oldest first):', ...(thread.length ? thread : ['(none yet)'])].join('\n');
+}
 
 // Read the tunable personal-context file fresh each call so edits to context.md
 // take effect on the next run without restarting the service. Prefer context.md,
@@ -21,7 +49,7 @@ export function ingestPrompt({ apiBase, overlapMs = 600000, bootstrapMs = 604800
   const bootstrapSec = Math.round(bootstrapMs / 1000);
   return `INGEST — Slack → tasklist (incremental reconcile).
 You have SLACK_USER_TOKEN in env (scopes: ${SLACK_SCOPES}) and the local API at ${apiBase}.
-Use Bash + curl + gh only. Do NOT use any Anthropic API. Do NOT use jq — build JSON with python3.
+${AGENT_RULES}
 
 WHO I AM / WHAT'S RELEVANT TO ME (use this to judge what to surface):
 ${loadContext()}
@@ -97,15 +125,18 @@ Steps:
 Output a one-line JSON summary at the end: {"new":N,"updated":N,"completed":N,"closed":N}.`;
 }
 
-export function replyPrompt({ apiBase, task }) {
+export function replyPrompt({ apiBase, db, task }) {
   return `REPLY task_id=${task.id}.
 WHO I AM (context): ${loadContext()}
-Fetch the task and its comment thread: curl -s ${apiBase}/api/tasks/${task.id}
+${AGENT_RULES}
+Here is the task and its full comment thread — you do NOT need to fetch it:
+---
+${renderThread(db, task.id)}
+---
 The latest 'me' comment is my request. Help with THIS task only.
-You may read Slack via SLACK_USER_TOKEN + curl (do NOT use any Anthropic API), draft messages, and reason.
+You MAY read Slack via SLACK_USER_TOKEN + curl if this task genuinely needs it — but not merely to re-read the thread above.
 When done, post your answer as an agent comment:
-  curl -s -X POST ${apiBase}/api/tasks/${task.id}/comments -H "content-type: application/json" \\
-    -d '{"author":"agent","body":"<your reply>"}'
+${postCommentRecipe(apiBase, task.id)}
 Task title: ${task.title}`;
 }
 
@@ -115,9 +146,8 @@ Fetch open tasks: curl -s "${apiBase}/api/tasks?status=open"
 Fetch done today: curl -s "${apiBase}/api/tasks?status=done"
 Write a concise Discord-formatted digest (markdown, <1800 chars): what's open by priority,
 what got done, and any Slack items that look urgent.
-Post it to Discord. Do NOT use jq (it may not be installed) — build the JSON payload
-with python3 instead, which is always available:
+Post it to Discord. ${AGENT_RULES}
   curl -s -X POST "$DISCORD_WEBHOOK_URL" -H "content-type: application/json" \\
     --data "$(python3 -c 'import json,sys;print(json.dumps({"content":sys.argv[1]}))' "<digest text>")"
-Do NOT use any Anthropic API. Output a one-line JSON summary.`;
+Output a one-line JSON summary.`;
 }
