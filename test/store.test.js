@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { openDb, slug, fingerprint, upsertTask, listTasks, getTask,
   patchTask, addComment, createRun, finishRun, activeRunForTask,
-  acquireLock, releaseLock } from '../src/store.js';
+  acquireLock, releaseLock, findOpenTaskByThread } from '../src/store.js';
 
 const db = () => openDb(':memory:');
 
@@ -52,6 +52,43 @@ test('active run is reflected on task', () => {
   assert.equal(activeRunForTask(d, id), true);
   finishRun(d, runId, 'ok', 'done');
   assert.equal(activeRunForTask(d, id), false);
+});
+
+test('upsertTask persists source_thread_ts and defaults updated_by to slack', () => {
+  const d = db();
+  const { id } = upsertTask(d, {
+    title: 'Ship launch', source_channel: 'C1', source_ts: '100.1',
+    source_thread_ts: '100.1',
+  });
+  const t = getTask(d, id);
+  assert.equal(t.source_thread_ts, '100.1');
+  assert.equal(t.updated_by, 'slack');
+});
+
+test('findOpenTaskByThread matches only open tasks on thread ts', () => {
+  const d = db();
+  const { id } = upsertTask(d, { title: 'A', source_channel: 'C1', source_ts: '1.1', source_thread_ts: 'T1' });
+  assert.equal(findOpenTaskByThread(d, 'T1').id, id);
+  assert.equal(findOpenTaskByThread(d, 'nope'), null);
+  assert.equal(findOpenTaskByThread(d, ''), null);
+  patchTask(d, id, { status: 'done' });
+  assert.equal(findOpenTaskByThread(d, 'T1'), null); // done tasks are not matched
+});
+
+test('patchTask records updated_by, defaulting to me', () => {
+  const d = db();
+  const { id } = upsertTask(d, { title: 'T', source_channel: 'C1', source_ts: '1.1' });
+  patchTask(d, id, { priority: 1 });
+  assert.equal(getTask(d, id).updated_by, 'me');
+  patchTask(d, id, { status: 'done', updated_by: 'slack' });
+  assert.equal(getTask(d, id).updated_by, 'slack');
+});
+
+test('addComment stamps the task updated_by with the comment author', () => {
+  const d = db();
+  const { id } = upsertTask(d, { title: 'T', source_channel: 'C1', source_ts: '1.1' });
+  addComment(d, id, 'slack', 'thread update from Slack');
+  assert.equal(getTask(d, id).updated_by, 'slack');
 });
 
 test('lock is exclusive until released', () => {

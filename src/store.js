@@ -49,6 +49,7 @@ export function openDb(dbPath) {
   for (const [col, def] of [
     ['repo_id', 'INTEGER'], ['agent_mode', 'TEXT'], ['base_branch', 'TEXT'],
     ['agent_phase', "TEXT NOT NULL DEFAULT 'idle'"], ['worktree_path', 'TEXT'], ['pr_url', 'TEXT'],
+    ['source_thread_ts', 'TEXT'], ['updated_by', "TEXT NOT NULL DEFAULT 'me'"],
   ]) {
     const exists = db.prepare(`SELECT 1 FROM pragma_table_info('tasks') WHERE name = ?`).get(col);
     if (!exists) db.exec(`ALTER TABLE tasks ADD COLUMN ${col} ${def}`);
@@ -75,13 +76,15 @@ export function upsertTask(db, t) {
   const existing = db.prepare('SELECT * FROM tasks WHERE fingerprint = ?').get(fp);
   if (existing) return { id: existing.id, created: false };
   const info = db.prepare(`INSERT INTO tasks
-    (title, detail, source_channel, source_ts, source_permalink, fingerprint, priority)
-    VALUES (@title, @detail, @source_channel, @source_ts, @source_permalink, @fp, @priority)`)
+    (title, detail, source_channel, source_ts, source_thread_ts, source_permalink, fingerprint, priority, updated_by)
+    VALUES (@title, @detail, @source_channel, @source_ts, @source_thread_ts, @source_permalink, @fp, @priority, @updated_by)`)
     .run({
       title: t.title, detail: t.detail || '',
       source_channel: t.source_channel || null, source_ts: t.source_ts || null,
+      source_thread_ts: t.source_thread_ts || null,
       source_permalink: t.source_permalink || null, fp,
       priority: t.priority ?? 2,
+      updated_by: t.updated_by || 'slack',
     });
   return { id: info.lastInsertRowid, created: true };
 }
@@ -101,10 +104,17 @@ export function getTask(db, id) {
   return t;
 }
 
+export function findOpenTaskByThread(db, threadTs) {
+  if (!threadTs) return null;
+  return db.prepare("SELECT * FROM tasks WHERE source_thread_ts = ? AND status = 'open' ORDER BY id LIMIT 1")
+    .get(threadTs) || null;
+}
+
 export function patchTask(db, id, fields) {
-  const allowed = ['status', 'title', 'detail', 'priority', 'pr_url'];
+  const allowed = ['status', 'title', 'detail', 'priority', 'pr_url', 'updated_by'];
   const sets = allowed.filter((k) => k in fields);
   if (sets.length) {
+    if (!('updated_by' in fields)) { fields = { ...fields, updated_by: 'me' }; sets.push('updated_by'); }
     const clause = sets.map((k) => `${k} = @${k}`).join(', ');
     db.prepare(`UPDATE tasks SET ${clause}, updated_at = datetime('now') WHERE id = @id`)
       .run({ ...fields, id });
@@ -115,7 +125,7 @@ export function patchTask(db, id, fields) {
 export function addComment(db, taskId, author, body) {
   const info = db.prepare('INSERT INTO comments (task_id, author, body) VALUES (?, ?, ?)')
     .run(taskId, author, body);
-  db.prepare("UPDATE tasks SET updated_at = datetime('now') WHERE id = ?").run(taskId);
+  db.prepare("UPDATE tasks SET updated_at = datetime('now'), updated_by = ? WHERE id = ?").run(author, taskId);
   return db.prepare('SELECT * FROM comments WHERE id = ?').get(info.lastInsertRowid);
 }
 
