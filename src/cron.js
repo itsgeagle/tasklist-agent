@@ -9,8 +9,17 @@ const apiBase = () => process.env.TASKLIST_API || config.API_BASE;
 
 export async function runIngest(db) {
   if (!acquireLock(db, 'ingest')) return;
-  try { await spawnAgent(db, { kind: 'ingest', prompt: ingestPrompt({ apiBase: apiBase() }), timeoutMs: config.INGEST_TIMEOUT_MS }); }
-  finally { releaseLock(db, 'ingest'); }
+  try {
+    await spawnAgent(db, {
+      kind: 'ingest',
+      prompt: ingestPrompt({
+        apiBase: apiBase(),
+        overlapMs: config.INGEST_OVERLAP_MS,
+        bootstrapMs: config.INGEST_BOOTSTRAP_MS,
+      }),
+      timeoutMs: config.INGEST_TIMEOUT_MS,
+    });
+  } finally { releaseLock(db, 'ingest'); }
 }
 
 export async function runDigest(db) {

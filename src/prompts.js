@@ -16,37 +16,71 @@ export function loadContext() {
   return '- Role: (no context.md found — see context.example.md)';
 }
 
-export function ingestPrompt({ apiBase }) {
-  return `INGEST — Slack → tasklist.
+export function ingestPrompt({ apiBase, overlapMs = 600000, bootstrapMs = 604800000 }) {
+  const overlapSec = Math.round(overlapMs / 1000);
+  const bootstrapSec = Math.round(bootstrapMs / 1000);
+  return `INGEST — Slack → tasklist (incremental reconcile).
 You have SLACK_USER_TOKEN in env (scopes: ${SLACK_SCOPES}) and the local API at ${apiBase}.
-Use Bash + curl only. Do NOT use any Anthropic API.
+Use Bash + curl + gh only. Do NOT use any Anthropic API. Do NOT use jq — build JSON with python3.
 
 WHO I AM / WHAT'S RELEVANT TO ME (use this to judge what to surface):
 ${loadContext()}
 
+GOAL: look only at what's NEW since the last run and reconcile it against the
+existing tasklist — new items become tasks, updates fold into the task they
+belong to, completed things get marked done, and tasks whose PR merged get closed.
+
 Steps:
-1. List my conversations:
+1. Read state:
+   - High-water-mark: curl -s ${apiBase}/api/meta/ingest_hwm  → {"value": "<slack ts>" | null}.
+     Compute the fetch floor OLDEST = (value − ${overlapSec}s overlap) if value is set,
+     else now − ${bootstrapSec}s (first-run bootstrap). Slack ts is unix seconds with a
+     ".xxxxxx" suffix; do the arithmetic on the integer-seconds part with python3.
+   - Open tasks: curl -s "${apiBase}/api/tasks?status=open" — this is what you reconcile against.
+     Note each task's id, source_thread_ts, and pr_url.
+2. List my conversations:
    curl -s -H "Authorization: Bearer $SLACK_USER_TOKEN" "https://slack.com/api/users.conversations?types=public_channel,private_channel,im,mpim&limit=200"
-2. For each conversation id C, fetch recent messages:
-   curl -s -H "Authorization: Bearer $SLACK_USER_TOKEN" "https://slack.com/api/conversations.history?channel=C&limit=50"
-   Also check mentions: search.messages?query=to:me OR your @handle.
-3. Select messages RELEVANT TO ME. Relevance is broader than a direct @-mention — include:
+3. For each conversation id C, fetch only new messages:
+   curl -s -H "Authorization: Bearer $SLACK_USER_TOKEN" "https://slack.com/api/conversations.history?channel=C&oldest=OLDEST&limit=200"
+   For any thread that saw new activity, also pull replies:
+   curl -s -H "Authorization: Bearer $SLACK_USER_TOKEN" "https://slack.com/api/conversations.replies?channel=C&ts=THREAD_TS&oldest=OLDEST"
+4. Select messages RELEVANT TO ME (relevance is broader than a direct @-mention):
    a. Direct @-mentions of me, and DMs to me.
    b. @channel / @here / @everyone announcements in channels I'm a member of.
-   c. Messages that concern my areas of responsibility per the context above
-      (decisions, blockers, incidents, requests, questions in my domain) even
-      when I'm NOT explicitly tagged.
-   Be selective: skip pure FYI/social/bot noise and things fully owned by someone
-   else that need nothing from me. Prefer recent activity.
-4. Turn each into a task. Set priority by type: things I must DO or REPLY to = higher
-   priority (1); things I should just be AWARE of / may need to follow up on = lower (3).
-   For each, get a permalink:
-   curl -s -H "Authorization: Bearer $SLACK_USER_TOKEN" "https://slack.com/api/chat.getPermalink?channel=C&message_ts=TS"
-5. POST each to the tasklist (server dedups by fingerprint — safe to re-post):
-   curl -s -X POST ${apiBase}/api/tasks -H "content-type: application/json" \\
-     -d '{"title":"...","detail":"...","source_channel":"C","source_ts":"TS","source_permalink":"URL","priority":2}'
-Keep titles short and imperative; put the "why it's relevant to me" in detail when not obvious.
-Output a one-line JSON summary at the end.`;
+   c. Messages in my areas of responsibility per the context above (decisions,
+      blockers, incidents, requests, questions in my domain) even when untagged.
+   Skip pure FYI/social/bot noise and things fully owned by someone else.
+5. RECONCILE each relevant message. Each Slack message has a thread_ts (its own ts
+   if it is a thread root). Decide where it belongs:
+   a. THREAD MATCH — its thread_ts equals an open task's source_thread_ts:
+      it is an UPDATE to that task. Post it as a comment (this records who/when):
+        curl -s -X POST ${apiBase}/api/tasks/ID/comments -H "content-type: application/json" \\
+          --data "$(python3 -c 'import json,sys;print(json.dumps({"author":"slack","updated_by":"slack","body":sys.argv[1]}))' "<what changed>")"
+      If the message signals I FINISHED the task (e.g. "done", "shipped", "merged",
+      "thanks, closing"), also mark it done:
+        curl -s -X PATCH ${apiBase}/api/tasks/ID -H "content-type: application/json" \\
+          -d '{"status":"done","updated_by":"slack"}'
+   b. NO THREAD MATCH — judge whether it relates to an existing open task by meaning.
+      If yes, treat it as an UPDATE exactly as in (a) against that task's id.
+      If no, it is NEW — create a task (carry the thread anchor so future replies
+      fold in). Get a permalink first:
+        curl -s -H "Authorization: Bearer $SLACK_USER_TOKEN" "https://slack.com/api/chat.getPermalink?channel=C&message_ts=TS"
+        curl -s -X POST ${apiBase}/api/tasks -H "content-type: application/json" \\
+          --data "$(python3 -c 'import json,sys;print(json.dumps({"title":sys.argv[1],"detail":sys.argv[2],"source_channel":sys.argv[3],"source_ts":sys.argv[4],"source_thread_ts":sys.argv[5],"source_permalink":sys.argv[6],"priority":int(sys.argv[7])}))' "TITLE" "DETAIL" "C" "TS" "THREAD_TS" "URL" "2")"
+      Set priority by type: things I must DO or REPLY to = 1; things to just be
+      AWARE of = 3; default 2. Keep titles short and imperative.
+6. PR-MERGE SWEEP — for every open task that has a pr_url, check if it merged:
+     gh pr view <pr_url> --json state,mergedAt
+   If merged (mergedAt is non-null / state MERGED), close it:
+     curl -s -X POST ${apiBase}/api/tasks/ID/comments -H "content-type: application/json" \\
+       -d '{"author":"slack","updated_by":"slack","body":"PR merged — closing."}'
+     curl -s -X PATCH ${apiBase}/api/tasks/ID -H "content-type: application/json" \\
+       -d '{"status":"done","updated_by":"slack"}'
+   Skip tasks whose pr_url is a local-branch placeholder (no real PR to query).
+7. Advance the high-water-mark to the largest Slack ts you saw this run:
+   curl -s -X PUT ${apiBase}/api/meta/ingest_hwm -H "content-type: application/json" \\
+     --data "$(python3 -c 'import json,sys;print(json.dumps({"value":sys.argv[1]}))' "<max ts>")"
+Output a one-line JSON summary at the end: {"new":N,"updated":N,"completed":N,"closed":N}.`;
 }
 
 export function replyPrompt({ apiBase, task }) {

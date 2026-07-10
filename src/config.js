@@ -26,6 +26,11 @@ export default {
   // (a live run measured 4m21s). 10 min default, override via env if needed.
   INGEST_TIMEOUT_MS: Number(process.env.INGEST_TIMEOUT_MS || 600000),
   DIGEST_TIMEOUT_MS: Number(process.env.DIGEST_TIMEOUT_MS || 600000),
+  // Incremental ingest: re-scan this far below the high-water-mark to catch
+  // edits/boundary messages (dedup absorbs the overlap). Bootstrap window is
+  // used only on the very first run, when no high-water-mark exists yet.
+  INGEST_OVERLAP_MS: Number(process.env.INGEST_OVERLAP_MS || 600000),
+  INGEST_BOOTSTRAP_MS: Number(process.env.INGEST_BOOTSTRAP_MS || 604800000),
   DIAGNOSE_TIMEOUT_MS: Number(process.env.DIAGNOSE_TIMEOUT_MS || 600000),
   EXECUTE_TIMEOUT_MS: Number(process.env.EXECUTE_TIMEOUT_MS || 2700000),
 };
