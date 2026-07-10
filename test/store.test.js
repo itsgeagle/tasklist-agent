@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { openDb, slug, fingerprint, upsertTask, listTasks, getTask,
   patchTask, addComment, createRun, finishRun, activeRunForTask,
-  acquireLock, releaseLock, findOpenTaskByThread } from '../src/store.js';
+  acquireLock, releaseLock, findOpenTaskByThread, latestRun } from '../src/store.js';
 
 const db = () => openDb(':memory:');
 
@@ -97,4 +97,30 @@ test('lock is exclusive until released', () => {
   assert.equal(acquireLock(d, 'ingest'), false);
   releaseLock(d, 'ingest');
   assert.equal(acquireLock(d, 'ingest'), true);
+});
+
+test('finishRun persists cost/token metrics on the run', () => {
+  const d = db();
+  const runId = createRun(d, { kind: 'ingest' });
+  finishRun(d, runId, 'ok', 'log', {
+    cost_usd: 0.0123, cost_estimated: false,
+    input_tokens: 1000, output_tokens: 200,
+    cache_read_tokens: 5, cache_write_tokens: 6,
+    num_turns: 3, duration_ms: 4200, model: 'claude-opus-4-8',
+  });
+  const r = latestRun(d, 'ingest');
+  assert.equal(r.cost_usd, 0.0123);
+  assert.equal(r.cost_estimated, 0);
+  assert.equal(r.input_tokens, 1000);
+  assert.equal(r.output_tokens, 200);
+  assert.equal(r.model, 'claude-opus-4-8');
+});
+
+test('finishRun without metrics leaves metric columns null (back-compat)', () => {
+  const d = db();
+  const runId = createRun(d, { kind: 'reply' });
+  finishRun(d, runId, 'ok', 'log');
+  const r = latestRun(d, 'reply');
+  assert.equal(r.cost_usd, null);
+  assert.equal(r.input_tokens, null);
 });

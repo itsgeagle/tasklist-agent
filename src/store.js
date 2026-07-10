@@ -54,6 +54,15 @@ export function openDb(dbPath) {
     const exists = db.prepare(`SELECT 1 FROM pragma_table_info('tasks') WHERE name = ?`).get(col);
     if (!exists) db.exec(`ALTER TABLE tasks ADD COLUMN ${col} ${def}`);
   }
+  for (const [col, def] of [
+    ['cost_usd', 'REAL'], ['cost_estimated', 'INTEGER'],
+    ['input_tokens', 'INTEGER'], ['output_tokens', 'INTEGER'],
+    ['cache_read_tokens', 'INTEGER'], ['cache_write_tokens', 'INTEGER'],
+    ['num_turns', 'INTEGER'], ['duration_ms', 'INTEGER'], ['model', 'TEXT'],
+  ]) {
+    const exists = db.prepare(`SELECT 1 FROM pragma_table_info('runs') WHERE name = ?`).get(col);
+    if (!exists) db.exec(`ALTER TABLE runs ADD COLUMN ${col} ${def}`);
+  }
   return db;
 }
 
@@ -142,9 +151,17 @@ export function createRun(db, { kind, task_id = null }) {
   return db.prepare('INSERT INTO runs (kind, task_id) VALUES (?, ?)').run(kind, task_id).lastInsertRowid;
 }
 
-export function finishRun(db, id, status, log) {
-  db.prepare("UPDATE runs SET status = ?, log = ?, finished_at = datetime('now') WHERE id = ?")
-    .run(status, String(log || '').slice(0, 20000), id);
+export function finishRun(db, id, status, log, metrics = {}) {
+  const m = metrics || {};
+  db.prepare(`UPDATE runs SET status = ?, log = ?, finished_at = datetime('now'),
+      cost_usd = ?, cost_estimated = ?, input_tokens = ?, output_tokens = ?,
+      cache_read_tokens = ?, cache_write_tokens = ?, num_turns = ?, duration_ms = ?, model = ?
+    WHERE id = ?`)
+    .run(status, String(log || '').slice(0, 20000),
+      m.cost_usd ?? null, m.cost_estimated ? 1 : 0,
+      m.input_tokens ?? null, m.output_tokens ?? null,
+      m.cache_read_tokens ?? null, m.cache_write_tokens ?? null,
+      m.num_turns ?? null, m.duration_ms ?? null, m.model ?? null, id);
 }
 
 export function activeRunForTask(db, taskId) {

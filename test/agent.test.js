@@ -29,3 +29,37 @@ process.stdout.write('{}');`);
   assert.ok(probed.argv.includes('Bash') && probed.argv.includes('Read'));
   assert.equal(latestRun(db, 'diagnose').status, 'ok');
 });
+
+test('spawnAgent captures cost/token metrics from the result event', async () => {
+  const STUB = new URL('../bin/stub-claude.js', import.meta.url).pathname;
+  const { spawnAgent } = await import('../src/agent.js?a2');
+  const { openDb, latestRun } = await import('../src/store.js');
+  const db = openDb(':memory:');
+  // DIGEST is the only stub path that emits a result event with NO network
+  // calls, so it exercises metric capture without needing a live API server
+  // (and never touches the real tasklist server).
+  const res = await spawnAgent(db, { kind: 'digest', prompt: 'DIGEST', tools: ['Bash'], _binOverride: STUB });
+  assert.equal(res.status, 'ok');
+  const r = latestRun(db, 'digest');
+  assert.equal(r.cost_usd, 0.01);
+  assert.equal(r.cost_estimated, 0);
+  assert.equal(r.input_tokens, 100);
+  assert.equal(r.output_tokens, 50);
+});
+
+test('spawnAgent estimates cost from tokens when total_cost_usd is absent', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-'));
+  const stub = path.join(dir, 'stub.js');
+  fs.writeFileSync(stub, `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({type:'system',subtype:'init',model:'claude-haiku-4-5'})+'\\n');
+process.stdout.write(JSON.stringify({type:'result',subtype:'success',is_error:false,num_turns:1,usage:{input_tokens:1000000,output_tokens:1000000}})+'\\n');`);
+  process.env.CLAUDE_BIN = 'node';
+  const { spawnAgent } = await import('../src/agent.js?a3');
+  const { openDb, latestRun } = await import('../src/store.js');
+  const db = openDb(':memory:');
+  await spawnAgent(db, { kind: 'ingest', prompt: 'hi', tools: ['Bash'], _binOverride: stub });
+  const r = latestRun(db, 'ingest');
+  assert.equal(r.cost_estimated, 1);
+  // 1M input @ $1 + 1M output @ $5 for haiku rate = 6.0
+  assert.equal(Math.round(r.cost_usd), 6);
+});

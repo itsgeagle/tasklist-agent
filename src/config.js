@@ -6,6 +6,23 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(root, '..');
 const PORT = Number(process.env.PORT || 8787);
 
+// Approximate list prices ($ per 1M tokens) used ONLY to estimate notional cost
+// when claude -p omits total_cost_usd (e.g. on some subscription runs). Not a
+// bill — the UI labels any estimated figure "est.". Tune freely; substring match
+// tolerates dated model ids (e.g. "claude-haiku-4-5-20251001").
+export const MODEL_RATES = {
+  'claude-opus-4-8': { input: 15, output: 75 },
+  'claude-sonnet-5': { input: 3, output: 15 },
+  'claude-haiku-4-5': { input: 1, output: 5 },
+  default: { input: 3, output: 15 },
+};
+
+export function estimateCost(model, inputTokens = 0, outputTokens = 0) {
+  const key = Object.keys(MODEL_RATES).find((k) => k !== 'default' && (model || '').includes(k)) || 'default';
+  const r = MODEL_RATES[key];
+  return (inputTokens / 1e6) * r.input + (outputTokens / 1e6) * r.output;
+}
+
 export default {
   PORT,
   HOST: '127.0.0.1',

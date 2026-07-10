@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import config from './config.js';
+import config, { estimateCost } from './config.js';
 import { createRun, finishRun } from './store.js';
 import * as runbus from './runbus.js';
 
@@ -76,10 +76,11 @@ export function spawnAgent(db, { kind, task_id = null, prompt, tools = ['Bash'],
     active.set(runId, child);
     runbus.begin(key, runId);
     let out = '', err = '', done = false, lineBuf = '';
+    let resultMeta = {}, model = null;
     const finish = (status) => {
       if (done) return; done = true;
       clearTimeout(timer); active.delete(runId);
-      finishRun(db, runId, status, (out + err).slice(0, 20000));
+      finishRun(db, runId, status, (out + err).slice(0, 20000), resultMeta);
       runbus.end(key, status);
       resolve({ status, log: out + err, runId });
     };
@@ -93,6 +94,26 @@ export function spawnAgent(db, { kind, task_id = null, prompt, tools = ['Bash'],
         lineBuf = lineBuf.slice(nl + 1);
         if (!line) continue;
         let obj; try { obj = JSON.parse(line); } catch { continue; } // ignore non-JSON noise
+        if (obj.type === 'system' && obj.subtype === 'init') model = obj.model || model;
+        if (obj.type === 'result') {
+          const u = obj.usage || {};
+          const input = u.input_tokens ?? null;
+          const output = u.output_tokens ?? null;
+          let cost = typeof obj.total_cost_usd === 'number' ? obj.total_cost_usd : null;
+          let estimated = false;
+          if (cost == null && (input != null || output != null)) {
+            cost = estimateCost(model, input || 0, output || 0);
+            estimated = true;
+          }
+          resultMeta = {
+            cost_usd: cost, cost_estimated: estimated,
+            input_tokens: input, output_tokens: output,
+            cache_read_tokens: u.cache_read_input_tokens ?? null,
+            cache_write_tokens: u.cache_creation_input_tokens ?? null,
+            num_turns: obj.num_turns ?? null, duration_ms: obj.duration_ms ?? null,
+            model,
+          };
+        }
         for (const ev of toEvents(obj)) runbus.publish(key, ev);
       }
     });

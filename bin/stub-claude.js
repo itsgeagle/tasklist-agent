@@ -15,7 +15,10 @@ const emit = (obj) => process.stdout.write(JSON.stringify(obj) + '\n');
 const init = () => emit({ type: 'system', subtype: 'init', model: 'stub-claude' });
 const tool = (command) => emit({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command } }] } });
 const toolResult = (text, is_error = false) => emit({ type: 'user', message: { content: [{ type: 'tool_result', content: text, is_error }] } });
-const result = (text) => emit({ type: 'result', subtype: 'success', is_error: false, num_turns: 2, result: text });
+const result = (text) => emit({ type: 'result', subtype: 'success', is_error: false,
+  num_turns: 2, duration_ms: 1234, total_cost_usd: 0.01,
+  usage: { input_tokens: 100, output_tokens: 50, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+  result: text });
 
 async function main() {
   init();
