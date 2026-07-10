@@ -50,3 +50,15 @@ test('runIngest runs the full LLM ingest when Slack has new activity', async () 
   assert.equal(latestRun(db, 'ingest').status, 'ok');
   server.close();
 });
+
+test('runIngest with force:true runs the full LLM ingest even when quiet and fresh', async () => {
+  process.env.CLAUDE_BIN = STUB;
+  const { runIngest } = await import('../src/cron.js?cforce');
+  const { db, server } = boot();
+  setMeta(db, 'ingest_hwm', '100.0');
+  setMeta(db, 'ingest_last_full', String(1_000_000));
+  // quiet + fresh (would normally skip), but force overrides:
+  await runIngest(db, { hasNew: async () => false, now: () => 1_000_000 + 60_000, force: true });
+  assert.equal(latestRun(db, 'ingest').status, 'ok');
+  server.close();
+});

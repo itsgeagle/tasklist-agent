@@ -8,7 +8,7 @@ import { hasNewSince } from './slack.js';
 // Resolve at call time so tests can retarget the API per case (see agent.js note).
 const apiBase = () => process.env.TASKLIST_API || config.API_BASE;
 
-export async function runIngest(db, { hasNew = hasNewSince, now = Date.now } = {}) {
+export async function runIngest(db, { hasNew = hasNewSince, now = Date.now, force = false } = {}) {
   if (!acquireLock(db, 'ingest')) return;
   try {
     const hwm = getMeta(db, 'ingest_hwm');
@@ -17,8 +17,9 @@ export async function runIngest(db, { hasNew = hasNewSince, now = Date.now } = {
     // Skip the expensive LLM spawn only when we have a watermark (i.e. not the
     // first-run bootstrap), it isn't time for the forced full sweep, and Slack
     // genuinely has nothing new. Record a lightweight 'skipped' run so the UI
-    // shows "skipped (quiet)" instead of looking dead.
-    if (hwm && !stale && (await hasNew(hwm)) === false) {
+    // shows "skipped (quiet)" instead of looking dead. A manual/explicit
+    // trigger (force: true) always performs a full ingest.
+    if (!force && hwm && !stale && (await hasNew(hwm)) === false) {
       const runId = createRun(db, { kind: 'ingest' });
       finishRun(db, runId, 'skipped', 'quiet: no new Slack messages since high-water-mark');
       return;

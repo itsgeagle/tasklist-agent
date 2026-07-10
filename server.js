@@ -26,7 +26,7 @@ const onCommentAgent = (id) => runReply(db, id);
 const onDispatch = (id, body) => dispatch(db, id, body);
 const onApprove = (id, plan) => approve(db, id, { plan });
 const onCancel = (id) => cancel(db, id);
-const onRunJob = (job) => (job === 'ingest' ? runIngest(db) : runDigest(db));
+const onRunJob = (job) => (job === 'ingest' ? runIngest(db, { force: true }) : runDigest(db));
 
 const app = express();
 app.use(express.json());
