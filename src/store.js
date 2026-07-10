@@ -172,6 +172,23 @@ export function latestRun(db, kind) {
   return db.prepare('SELECT * FROM runs WHERE kind = ? ORDER BY id DESC LIMIT 1').get(kind) || null;
 }
 
+export function runsForTask(db, taskId, limit = 20) {
+  return db.prepare(
+    `SELECT id, kind, status, cost_usd, cost_estimated, started_at, finished_at
+       FROM runs WHERE task_id = ? ORDER BY id DESC LIMIT ?`,
+  ).all(taskId, limit);
+}
+
+export function activeRuns(db) {
+  return db.prepare(
+    "SELECT id, kind, task_id, started_at FROM runs WHERE status = 'running' ORDER BY id DESC",
+  ).all();
+}
+
+export function getRun(db, id) {
+  return db.prepare('SELECT * FROM runs WHERE id = ?').get(id) || null;
+}
+
 export function getMeta(db, key) {
   const r = db.prepare('SELECT value FROM meta WHERE key = ?').get(key);
   return r ? r.value : null;

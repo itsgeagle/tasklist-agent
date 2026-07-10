@@ -54,6 +54,9 @@
     font: 12px/1.5 ui-monospace, Menlo, monospace; white-space: pre-wrap; word-break: break-word; }
   #conlog .tool { color: #4a90d9; } #conlog .result { opacity: .75; } #conlog .stderr { color: #c0392b; }
   #conlog .done { color: #27ae60; } #conlog .start { opacity: .7; }
+  .runs { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-left: 6px; vertical-align: middle; }
+  .runrow { font-size: 11px; padding: 2px 6px; }
+  #activity { cursor: pointer; }
 </style>
 </head>
 <body>
@@ -69,6 +72,7 @@
     <button id="run-digest" onclick="runJob('digest', this)">Run digest</button>
     <span id="jobstatus" style="font-size:12px;opacity:.7;"></span>
   </span>
+  <span id="activity" style="font-size:12px;color:#d68910;" title="Watch a running agent" onclick="watchNewestActive()"></span>
   <a href="/repos.html" style="color:#4a90d9;font-size:13px;">Repos</a>
   <span id="usage" style="font-size:12px;opacity:.7;"></span>
 </header>
@@ -176,17 +180,73 @@ async function loadStatusBanner() {
   bb.style.display = showBudget ? 'flex' : 'none';
   if (showBudget) document.getElementById('budgetmsg').textContent =
     `Today's est. spend ${dollars} exceeds your $${u.budget.daily_usd} budget. Scheduled jobs are still running.`;
+  // Activity indicator: what's running now (any kind), clickable to watch.
+  try {
+    const runs = await (await fetch('/api/runs/active')).json();
+    window._activeRuns = runs;
+    document.getElementById('activity').textContent =
+      runs.length ? '▶ ' + runs.map((r) => r.kind + (r.task_id ? ' #' + r.task_id : '')).join(', ') : '';
+  } catch { /* offline — leave prior text */ }
+}
+
+function watchNewestActive() {
+  const runs = window._activeRuns || [];
+  if (runs.length) openConsole(runs[0].id, runs[0].kind + (runs[0].task_id ? ' #' + runs[0].task_id : ''));
 }
 
 async function runJob(job, btn) {
   const label = btn.textContent;
   btn.disabled = true;
   btn.textContent = job === 'ingest' ? 'Pulling…' : 'Running…';
-  openConsole(job);
   try {
     await fetch('/api/run/' + job, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
   } catch (e) { /* status label reflects real run state on next poll */ }
+  // The run row is created just after this fire-and-forget trigger; resolve its
+  // runId from the active list, then open the console on it.
+  watchLatest(job, job === 'ingest' ? 'Slack pull' : 'Digest');
   setTimeout(() => { btn.disabled = false; btn.textContent = label; loadStatusBanner(); }, 1500);
+}
+
+// Poll /api/runs/active briefly until the just-triggered job's run appears, then watch it.
+async function watchLatest(kind, title) {
+  for (let i = 0; i < 20; i++) {
+    try {
+      const active = await (await fetch('/api/runs/active')).json();
+      const run = active.find((r) => r.kind === kind);
+      if (run) return openConsole(run.id, title);
+    } catch { /* retry */ }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+}
+
+// Task ids whose run-history list is expanded. render() rebuilds #list wholesale
+// (wiping injected HTML), so we re-populate these after every render.
+const openRuns = new Set();
+
+// Open the live console for a task's active run if one is running; otherwise toggle
+// its run history so a finished run can be reopened.
+async function watchTask(id) {
+  let active = [];
+  try { active = await (await fetch('/api/runs/active')).json(); } catch { /* offline */ }
+  const run = active.find((r) => r.task_id === id);
+  if (run) { openConsole(run.id, 'task ' + id + ' · ' + run.kind); return; }
+  if (openRuns.has(id)) { openRuns.delete(id); const el = document.getElementById('runs-' + id); if (el) el.innerHTML = ''; }
+  else { openRuns.add(id); loadRuns(id); }
+}
+
+// Render a task's recent runs (kind · status · cost · time); each row reopens its
+// persisted trace in the console.
+async function loadRuns(id) {
+  const el = document.getElementById('runs-' + id);
+  if (!el) return;
+  let runs = [];
+  try { runs = await (await fetch('/api/tasks/' + id + '/runs')).json(); } catch { /* offline */ }
+  if (!runs.length) { el.innerHTML = '<span style="opacity:.6;font-size:11px;">no runs yet</span>'; return; }
+  el.innerHTML = runs.map((r) => {
+    const cost = r.cost_usd != null ? `${r.cost_estimated ? '~$' : '$'}${Number(r.cost_usd).toFixed(4)}` : '';
+    const label = `${esc(r.kind)} · ${esc(r.status)}${cost ? ' · ' + cost : ''} · ${localTime(r.started_at)}`;
+    return `<button class="runrow" onclick="openConsole(${r.id}, 'run ${r.id} · ${esc(r.kind)}')">${label}</button>`;
+  }).join('');
 }
 
 let es = null;
@@ -203,14 +263,14 @@ function conLine(cls, text) {
   log.appendChild(div);
   if (atBottom) log.scrollTop = log.scrollHeight;
 }
-function openConsole(kind) {
+function openConsole(runId, title) {
   if (es) { es.close(); es = null; }
   document.getElementById('console').hidden = false;
-  document.getElementById('contitle').textContent = kind === 'ingest' ? 'Slack pull' : 'Digest';
+  document.getElementById('contitle').textContent = title || ('run ' + runId);
   document.getElementById('conlog').innerHTML = '';
   const dot = document.getElementById('condot'), st = document.getElementById('constatus');
   dot.className = 'dot'; st.textContent = 'running…';
-  es = new EventSource('/api/runs/' + kind + '/stream');
+  es = new EventSource('/api/runs/' + runId + '/stream');
   es.onmessage = (m) => {
     let ev; try { ev = JSON.parse(m.data); } catch { return; }
     if (ev.t === 'reset') { document.getElementById('conlog').innerHTML = ''; return; }
@@ -247,9 +307,11 @@ function taskHtml(t) {
        </div>` : '';
   const busy = ['diagnosing','executing'].includes(phase)
     ? `<div class="agentbar"><span class="spin">● agent ${esc(phase)}…</span>
+         <button onclick="watchTask(${t.id})">Watch</button>
          <button onclick="cancelAgent(${t.id})">Cancel</button></div>` : '';
   const dispatchBar = ['idle','done','failed'].includes(phase)
     ? `<div class="agentbar"><button onclick="handToAgent(${t.id})">Hand to agent</button></div>` : '';
+  const runsBar = `<div class="agentbar"><button onclick="watchTask(${t.id})">Runs</button><span id="runs-${t.id}" class="runs"></span></div>`;
 
   return `<div class="task ${t.status}" data-id="${t.id}">
     <div class="row">
@@ -259,7 +321,7 @@ function taskHtml(t) {
     ${t.detail ? `<div>${esc(t.detail)}</div>` : ''}
     ${src}${meta}
     <div class="thread">${cmts}</div>
-    ${pr}${approveBar}${busy}${dispatchBar}
+    ${pr}${approveBar}${busy}${dispatchBar}${runsBar}
     <form class="add" onsubmit="return comment(event, ${t.id})">
       <input type="text" name="body" placeholder="Comment, or @claude for help…" autocomplete="off">
       <button type="submit">Send</button>
@@ -271,6 +333,8 @@ async function render() {
   const tasks = await (await fetch('/api/tasks?status=' + status)).json();
   document.getElementById('list').innerHTML =
     tasks.length ? tasks.map(taskHtml).join('') : '<p>No tasks.</p>';
+  // Re-populate any run-history lists the user has expanded (render wiped them).
+  openRuns.forEach((id) => loadRuns(id));
 }
 
 // render() rebuilds #list wholesale, which destroys any comment <input> the user

@@ -3,9 +3,24 @@ import assert from 'node:assert/strict';
 import { openDb, slug, fingerprint, upsertTask, listTasks, getTask,
   patchTask, addComment, createRun, finishRun, activeRunForTask,
   acquireLock, releaseLock, findOpenTaskByThread, latestRun,
-  usageToday, usageByDay } from '../src/store.js';
+  usageToday, usageByDay, runsForTask, activeRuns, getRun } from '../src/store.js';
 
 const db = () => openDb(':memory:');
+
+test('runsForTask / activeRuns / getRun', () => {
+  const d = db();
+  const r1 = createRun(d, { kind: 'diagnose', task_id: 42 });
+  const r2 = createRun(d, { kind: 'execute', task_id: 42 });
+  finishRun(d, r1, 'ok', 'log', {});
+  const runs = runsForTask(d, 42);
+  assert.equal(runs.length, 2);
+  assert.equal(runs[0].id, r2);                 // newest first
+  const active = activeRuns(d);
+  assert.ok(active.some((r) => r.id === r2));    // r2 still running
+  assert.ok(!active.some((r) => r.id === r1));   // r1 finished
+  assert.equal(getRun(d, r1).status, 'ok');
+  assert.equal(getRun(d, 999999), null);
+});
 
 test('slug normalizes text', () => {
   assert.equal(slug('Fix the Login Bug!'), 'fix-the-login-bug');

@@ -39,7 +39,7 @@ async function doDispatch(db, taskId, { repo_id, base_branch, mode = 'code' } = 
       kind: 'diagnose', task_id: taskId, tools: modeDef.diagnoseTools, cwd: wt.worktreePath,
       timeoutMs: config.DIAGNOSE_TIMEOUT_MS,
       model: config.MODEL_DIAGNOSE,
-      prompt: modeDef.diagnosePrompt({ apiBase: apiBase(), task: t, worktreePath: wt.worktreePath }),
+      prompt: modeDef.diagnosePrompt({ apiBase: apiBase(), task: t, worktreePath: wt.worktreePath, db }),
     });
     if (res.status === 'ok') setAgentFields(db, taskId, { agent_phase: 'awaiting_approval' });
     else { setAgentFields(db, taskId, { agent_phase: 'failed' }); addComment(db, taskId, 'system', 'Diagnosis failed.'); cleanupWorktree(repo.path, wt.worktreePath); }

@@ -1,6 +1,7 @@
 import express from 'express';
 import * as store from './store.js';
 import * as runbus from './runbus.js';
+import * as trace from './trace.js';
 import { validateRepo } from './repos.js';
 
 const JOBS = ['ingest', 'digest'];
@@ -18,25 +19,46 @@ export function makeRouter(db, { onCommentAgent, onDispatch, onApprove, onCancel
     res.json({ ok: true });
   });
 
-  // Live trace of a run via Server-Sent Events. Replays the current buffer, then
-  // streams events until the run ends or the client disconnects.
-  r.get('/api/runs/:kind/stream', (req, res) => {
-    const { kind } = req.params;
-    if (!JOBS.includes(kind)) return res.status(400).json({ error: 'unknown kind' });
+  // What's running right now (drives the activity indicator + lets manual job
+  // triggers resolve their runId). MUST precede '/api/runs/:runId' so "active"
+  // isn't parsed as a run id.
+  r.get('/api/runs/active', (_req, res) => res.json(store.activeRuns(db)));
+
+  // Live trace of a specific run via Server-Sent Events. Active run → replay the
+  // in-memory buffer and tail live; finished run → replay its persisted JSONL
+  // trace, then close.
+  r.get('/api/runs/:runId/stream', (req, res) => {
+    const runId = Number(req.params.runId);
+    const run = store.getRun(db, runId);
+    if (!run) return res.status(404).json({ error: 'unknown run' });
     res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
     res.flushHeaders?.();
-    let closed = false;
-    let unsub = () => {};
+    let closed = false, unsub = () => {};
     const send = (ev) => { if (!closed) res.write(`data: ${JSON.stringify(ev)}\n\n`); };
     const hb = setInterval(() => { if (!closed) res.write(': hb\n\n'); }, 15000);
     const cleanup = () => { if (closed) return; closed = true; clearInterval(hb); unsub(); try { res.end(); } catch { /* already gone */ } };
     req.on('close', cleanup);
-    // subscribe() replays the buffer synchronously; if that buffer already ends
-    // the run, cleanup() runs here with unsub still a no-op — so drop the just-
-    // added subscriber afterwards.
-    unsub = runbus.subscribe(kind, (ev) => { send(ev); if (ev.t === 'end') cleanup(); });
-    if (closed) unsub();
+    if (runbus.snapshot(runId)) {
+      // still active — replay the buffer synchronously, then tail live
+      unsub = runbus.subscribe(runId, (ev) => { send(ev); if (ev.t === 'end') cleanup(); });
+      if (closed) unsub();
+    } else {
+      // finished (or pre-restart) — replay the durable trace, then close
+      const events = trace.read(runId);
+      let sawEnd = false;
+      for (const ev of events) { send(ev); if (ev.t === 'end') sawEnd = true; }
+      if (!sawEnd) send({ t: 'end', status: run.status });
+      cleanup();
+    }
   });
+
+  r.get('/api/runs/:runId', (req, res) => {
+    const run = store.getRun(db, Number(req.params.runId));
+    if (!run) return res.status(404).json({ error: 'unknown run' });
+    res.json(run);
+  });
+
+  r.get('/api/tasks/:id/runs', (req, res) => res.json(store.runsForTask(db, Number(req.params.id))));
 
   r.get('/api/tasks', (req, res) => {
     res.json(store.listTasks(db, req.query.status || 'open'));
