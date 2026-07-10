@@ -19,6 +19,9 @@
   .title { font-weight: 600; flex: 1; }
   .src a { font-size: 12px; color: #4a90d9; text-decoration: none; }
   .thread { margin: 10px 0 0 26px; border-left: 2px solid #8884; padding-left: 10px; }
+  .meta { font-size: 11px; opacity: .6; margin: 2px 0; }
+  .meta.slack { color: #4a90d9; }
+  .meta.agent { color: #7c5cbf; }
   .cmt { margin: 6px 0; }
   .cmt .who { font-weight: 600; font-size: 12px; text-transform: uppercase; opacity: .7; }
   .cmt.agent .who { color: #27ae60; }
@@ -152,6 +155,9 @@ function taskHtml(t) {
   const cmts = (t.comments || []).map((c) =>
     `<div class="cmt ${esc(c.author)}"><span class="who">${esc(c.author)}</span> ${esc(c.body)}</div>`).join('');
   const src = t.source_permalink ? `<div class="src"><a href="${esc(t.source_permalink)}" target="_blank">source ↗</a></div>` : '';
+  const who = esc(t.updated_by || 'me');
+  const when = localTime(t.updated_at);
+  const meta = `<div class="meta ${who}">updated ${when} · by ${who}</div>`;
   const spin = t.active_run ? '<span class="spin">● claude working…</span>' : '';
 
   const phase = t.agent_phase || 'idle';
@@ -175,7 +181,7 @@ function taskHtml(t) {
       <div class="title">${esc(t.title)} ${spin}${pill}</div>
     </div>
     ${t.detail ? `<div>${esc(t.detail)}</div>` : ''}
-    ${src}
+    ${src}${meta}
     <div class="thread">${cmts}</div>
     ${pr}${approveBar}${busy}${dispatchBar}
     <form class="add" onsubmit="return comment(event, ${t.id})">
