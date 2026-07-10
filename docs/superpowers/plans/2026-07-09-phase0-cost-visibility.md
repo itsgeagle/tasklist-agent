@@ -194,13 +194,15 @@ Append two tests. The first uses the real stub; the second an inline stub that o
 ```javascript
 test('spawnAgent captures cost/token metrics from the result event', async () => {
   const STUB = new URL('../bin/stub-claude.js', import.meta.url).pathname;
-  process.env.CLAUDE_BIN = 'node';
   const { spawnAgent } = await import('../src/agent.js?a2');
   const { openDb, latestRun } = await import('../src/store.js');
   const db = openDb(':memory:');
-  const res = await spawnAgent(db, { kind: 'diagnose', prompt: 'DIAGNOSE task_id=1', tools: ['Bash'], _binOverride: STUB });
+  // DIGEST is the only stub path that emits a result event with NO network
+  // calls, so it exercises metric capture without needing a live API server
+  // (and never touches the real tasklist server).
+  const res = await spawnAgent(db, { kind: 'digest', prompt: 'DIGEST', tools: ['Bash'], _binOverride: STUB });
   assert.equal(res.status, 'ok');
-  const r = latestRun(db, 'diagnose');
+  const r = latestRun(db, 'digest');
   assert.equal(r.cost_usd, 0.01);
   assert.equal(r.cost_estimated, 0);
   assert.equal(r.input_tokens, 100);
@@ -247,7 +249,7 @@ git commit --no-gpg-sign -m "feat(cost): capture per-run token/cost metrics from
 - Modify: `src/routes.js` (reshape `/api/usage`; add `/api/usage/history`)
 - Modify: `public/index.html` (honest meter + budget banner)
 - Modify: `test/engine.test.js` (fix the usage-shape assertion)
-- Test: `test/store.test.js`, `test/routes.test.js`
+- Test: `test/store.test.js`, `test/usage.test.js` (new)
 
 **Interfaces:**
 - Consumes: metric columns from Task 1.
@@ -356,33 +358,45 @@ In `src/routes.js`, replace the existing `/api/usage` handler (`routes.js:137-14
   });
 ```
 
-- [ ] **Step 7: Write the failing route test in `test/routes.test.js`**
+- [ ] **Step 7: Write the failing route test in a new file `test/usage.test.js`**
 
-Follow that file's existing boot pattern (mirror how it constructs `makeRouter` + `app.listen(0)`; reuse its helper). Add:
+A dedicated file, because `DAILY_BUDGET` is captured when `config.js` is first
+evaluated (lazily, on the first `/api/usage` hit) — setting it at module top
+before any import that loads config guarantees the intended value. The existing
+`routes.test.js` `boot()` doesn't return `db`, so build the server inline.
 
 ```javascript
-test('GET /api/usage returns shaped totals and over-budget flag', async () => {
-  process.env.DAILY_BUDGET = '0.01';
-  const { db, base, server } = await bootRoutes(); // use this file's existing boot helper
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import express from 'express';
+process.env.DAILY_BUDGET = '0.01'; // captured when routes lazily imports config on first /api/usage
+import { openDb, createRun, finishRun } from '../src/store.js';
+import { makeRouter } from '../src/routes.js';
+
+test('GET /api/usage returns shaped totals and an over-budget flag; history is an array', async () => {
+  const db = openDb(':memory:');
+  const app = express(); app.use(express.json()); app.use(makeRouter(db, {}));
+  const server = app.listen(0);
+  const base = `http://127.0.0.1:${server.address().port}`;
   const runId = createRun(db, { kind: 'ingest' });
   finishRun(db, runId, 'ok', '', { cost_usd: 0.5, input_tokens: 10, output_tokens: 5 });
   const u = await (await fetch(`${base}/api/usage`)).json();
   assert.equal(u.today.total.cost_usd, 0.5);
+  assert.equal(u.today.by_kind.ingest.input_tokens, 10);
   assert.equal(u.budget.over, true);
+  assert.equal(u.budget.daily_usd, 0.01);
   assert.equal(u.cap, 2);
   const h = await (await fetch(`${base}/api/usage/history?days=7`)).json();
   assert.ok(Array.isArray(h));
+  assert.equal(h[0].cost_usd, 0.5);
   server.close();
-  delete process.env.DAILY_BUDGET;
 });
 ```
 
-> Note: if `test/routes.test.js` has no reusable boot helper, construct the server inline exactly as the other tests in that file do (`const app = express(); app.use(express.json()); app.use(makeRouter(db, {})); const server = await new Promise(r => { const s = app.listen(0, () => r(s)); });`), and `import { openDb, createRun, finishRun } from '../src/store.js'`.
-
 - [ ] **Step 8: Run to verify it fails, then passes after Step 6 is in place**
 
-Run: `node --test test/routes.test.js`
-Expected: PASS once the route is implemented (write test first, confirm FAIL on old shape, then it PASSes).
+Run: `node --test test/usage.test.js`
+Expected: write the test first and confirm it FAILs (route not reshaped / file new), then PASS once Step 6's route is implemented.
 
 - [ ] **Step 9: Fix the now-stale engine usage test**
 
@@ -436,7 +450,7 @@ Expected: PASS.
 - [ ] **Step 12: Commit**
 
 ```bash
-git add src/store.js src/config.js src/routes.js public/index.html test/store.test.js test/routes.test.js test/engine.test.js
+git add src/store.js src/config.js src/routes.js public/index.html test/store.test.js test/usage.test.js test/engine.test.js
 git commit --no-gpg-sign -m "feat(cost): truthful /api/usage across all kinds + UI meter and budget banner"
 ```
 
@@ -699,45 +713,63 @@ In `src/config.js` default export:
 
 - [ ] **Step 2: Write failing cron tests**
 
-Create `test/cron.test.js`. The stub records nothing on skip; we assert via `latestRun('ingest').status`.
+Create `test/cron.test.js`. On skip, no spawn happens and we assert
+`latestRun('ingest').status === 'skipped'`. On a full run, the stub posts tasks
+over HTTP — so we point `TASKLIST_API` at a **throwaway in-memory server** (never
+the real tasklist on `:8787`) wired to the test db, and the run completes `ok`.
 
 ```javascript
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import express from 'express';
 import { openDb, latestRun, setMeta } from '../src/store.js';
+import { makeRouter } from '../src/routes.js';
 
 const STUB = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'stub-claude.js');
+
+// Point ingest's API writes at a throwaway server bound to the test db, so the
+// stub NEVER posts to the real running tasklist server on 127.0.0.1:8787.
+function boot() {
+  const db = openDb(':memory:');
+  const app = express(); app.use(express.json()); app.use(makeRouter(db, {}));
+  const server = app.listen(0);
+  process.env.TASKLIST_API = `http://127.0.0.1:${server.address().port}`;
+  return { db, server };
+}
 
 test('runIngest skips the LLM spawn when quiet and not stale', async () => {
   process.env.CLAUDE_BIN = STUB;
   const { runIngest } = await import('../src/cron.js?c1');
-  const db = openDb(':memory:');
+  const { db, server } = boot();
   setMeta(db, 'ingest_hwm', '100.0');
   setMeta(db, 'ingest_last_full', String(1_000_000));
   await runIngest(db, { hasNew: async () => false, now: () => 1_000_000 + 60_000 }); // 1 min later
   assert.equal(latestRun(db, 'ingest').status, 'skipped');
+  server.close();
 });
 
 test('runIngest runs the full LLM ingest when quiet but stale', async () => {
   process.env.CLAUDE_BIN = STUB;
   const { runIngest } = await import('../src/cron.js?c2');
-  const db = openDb(':memory:');
+  const { db, server } = boot();
   setMeta(db, 'ingest_hwm', '100.0');
   setMeta(db, 'ingest_last_full', String(1_000_000));
   await runIngest(db, { hasNew: async () => false, now: () => 1_000_000 + 4 * 3600_000 }); // 4h later > 3h
   assert.equal(latestRun(db, 'ingest').status, 'ok');
+  server.close();
 });
 
 test('runIngest runs the full LLM ingest when Slack has new activity', async () => {
   process.env.CLAUDE_BIN = STUB;
   const { runIngest } = await import('../src/cron.js?c3');
-  const db = openDb(':memory:');
+  const { db, server } = boot();
   setMeta(db, 'ingest_hwm', '100.0');
   setMeta(db, 'ingest_last_full', String(1_000_000));
   await runIngest(db, { hasNew: async () => true, now: () => 1_000_000 + 60_000 });
   assert.equal(latestRun(db, 'ingest').status, 'ok');
+  server.close();
 });
 ```
 
