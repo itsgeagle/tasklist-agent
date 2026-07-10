@@ -9,7 +9,9 @@
   body { font: 15px/1.5 system-ui, sans-serif; margin: 0; background: Canvas; color: CanvasText; }
   header { padding: 12px 20px; border-bottom: 1px solid #8884; display: flex; gap: 16px; align-items: center; }
   h1 { font-size: 18px; margin: 0; }
-  .banner { background: #c0392b; color: #fff; padding: 6px 20px; font-size: 13px; display: none; }
+  .banner { background: #c0392b; color: #fff; padding: 6px 20px; font-size: 13px; display: none; align-items: center; justify-content: space-between; gap: 12px; }
+  .banner-x { background: transparent; border: 0; color: #fff; font: inherit; font-size: 15px; line-height: 1; cursor: pointer; opacity: .8; padding: 2px 6px; }
+  .banner-x:hover { opacity: 1; }
   main { max-width: 820px; margin: 0 auto; padding: 20px; }
   .task { border: 1px solid #8884; border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; }
   .task.done { opacity: .55; }
@@ -54,7 +56,7 @@
   <a href="/repos.html" style="color:#4a90d9;font-size:13px;">Repos</a>
   <span id="usage" style="font-size:12px;opacity:.7;"></span>
 </header>
-<div class="banner" id="banner"></div>
+<div class="banner" id="banner"><span id="bannermsg"></span><button type="button" class="banner-x" title="Dismiss" onclick="dismissBanner()">✕</button></div>
 <div id="console" hidden>
   <div class="chead">
     <span class="dot" id="condot">●</span>
@@ -68,14 +70,29 @@
 <script>
 let status = 'open';
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+// Timestamps from the API are SQLite datetime('now') strings — UTC, no zone marker.
+// Append 'Z' so the browser parses them as UTC, then render in the viewer's local zone.
+const asUTC = (s) => new Date(String(s).replace(' ', 'T') + 'Z');
+const localDateTime = (s) => s ? asUTC(s).toLocaleString() : '';
+const localTime = (s) => s ? asUTC(s).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+
+// The failed run currently reflected in the banner, keyed by finished_at so a
+// dismissal sticks for that failure only — a newer failure re-surfaces the banner.
+let lastIngestFail = null;
+function dismissBanner() {
+  if (lastIngestFail != null) localStorage.setItem('ingestBannerDismissed', lastIngestFail);
+  document.getElementById('banner').style.display = 'none';
+}
 
 async function loadStatusBanner() {
   const s = await (await fetch('/api/status')).json();
   const b = document.getElementById('banner');
   const bad = s.ingest && s.ingest.status === 'failed';
-  b.style.display = bad ? 'block' : 'none';
-  if (bad) b.textContent = 'Last Slack ingest failed — ' + (s.ingest.finished_at || '');
-  const fmt = (r) => r ? `${r.status}${r.finished_at ? ' · ' + r.finished_at.slice(11, 16) : ''}` : '—';
+  lastIngestFail = bad ? (s.ingest.finished_at || '') : null;
+  const show = bad && localStorage.getItem('ingestBannerDismissed') !== lastIngestFail;
+  b.style.display = show ? 'flex' : 'none';
+  if (show) document.getElementById('bannermsg').textContent = 'Last Slack ingest failed — ' + localDateTime(s.ingest.finished_at);
+  const fmt = (r) => r ? `${r.status}${r.finished_at ? ' · ' + localTime(r.finished_at) : ''}` : '—';
   document.getElementById('jobstatus').textContent =
     `ingest: ${fmt(s.ingest)} · digest: ${fmt(s.digest)}`;
   const u = await (await fetch('/api/usage')).json();
