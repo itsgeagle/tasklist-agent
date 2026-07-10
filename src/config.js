@@ -57,4 +57,7 @@ export default {
   MODEL_REPLY: process.env.MODEL_REPLY || '',
   MODEL_DIAGNOSE: process.env.MODEL_DIAGNOSE || '',
   MODEL_EXECUTE: process.env.MODEL_EXECUTE || '',
+  // Even when Slack looks quiet, force a full LLM ingest at least this often so
+  // the PR-merge sweep and any missed edges still run. Default 3h.
+  INGEST_MAX_QUIET_MS: Number(process.env.INGEST_MAX_QUIET_MS || 10800000),
 };
