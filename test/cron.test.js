@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import './helpers/trace-dir.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';

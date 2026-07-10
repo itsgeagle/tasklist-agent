@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import './helpers/trace-dir.js';
 import fs from 'node:fs';
 import * as trace from '../src/trace.js';
 

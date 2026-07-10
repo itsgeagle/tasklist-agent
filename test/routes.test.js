@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import './helpers/trace-dir.js';
 import express from 'express';
 import { openDb } from '../src/store.js';
 import { makeRouter } from '../src/routes.js';
