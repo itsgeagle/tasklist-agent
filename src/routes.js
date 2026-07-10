@@ -60,11 +60,22 @@ export function makeRouter(db, { onCommentAgent, onDispatch, onApprove, onCancel
     res.json(t);
   });
 
+  r.get('/api/meta/ingest_hwm', (_req, res) => {
+    res.json({ value: store.getMeta(db, 'ingest_hwm') });
+  });
+
+  r.put('/api/meta/ingest_hwm', (req, res) => {
+    const { value } = req.body || {};
+    if (value == null) return res.status(400).json({ error: 'value required' });
+    store.setMeta(db, 'ingest_hwm', value);
+    res.json({ value: store.getMeta(db, 'ingest_hwm') });
+  });
+
   r.post('/api/tasks/:id/comments', (req, res) => {
     const id = Number(req.params.id);
     if (!store.getTask(db, id)) return res.status(404).json({ error: 'not found' });
-    const { author = 'me', body = '', ask_agent = false } = req.body || {};
-    const c = store.addComment(db, id, author, body);
+    const { author = 'me', body = '', ask_agent = false, updated_by } = req.body || {};
+    const c = store.addComment(db, id, updated_by || author, body);
     const wantsAgent = ask_agent || (author === 'me' && /@claude\b/i.test(body));
     if (wantsAgent && onCommentAgent) setImmediate(() => Promise.resolve(onCommentAgent(id)).catch((e) => console.error('[onCommentAgent] failed', e)));
     res.json(c);

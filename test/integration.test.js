@@ -63,6 +63,33 @@ test('commenting @claude spawns a reply run that posts an agent comment', async 
   server.close();
 });
 
+test('meta watermark round-trips and PATCH accepts updated_by', async () => {
+  const db = openDb(':memory:');
+  const app = express();
+  app.use(express.json());
+  app.use(makeRouter(db));
+  const server = await new Promise((res) => { const s = app.listen(0, () => res(s)); });
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  // watermark starts null, then round-trips
+  let hwm = await (await fetch(`${base}/api/meta/ingest_hwm`)).json();
+  assert.equal(hwm.value, null);
+  await fetch(`${base}/api/meta/ingest_hwm`, { method: 'PUT',
+    headers: { 'content-type': 'application/json' }, body: JSON.stringify({ value: '200.5' }) });
+  hwm = await (await fetch(`${base}/api/meta/ingest_hwm`)).json();
+  assert.equal(hwm.value, '200.5');
+
+  // PATCH carries updated_by through to the row
+  const { id } = await (await fetch(`${base}/api/tasks`, { method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ title: 'T', source_channel: 'C1', source_ts: '1.1' }) })).json();
+  const patched = await (await fetch(`${base}/api/tasks/${id}`, { method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ status: 'done', updated_by: 'slack' }) })).json();
+  assert.equal(patched.updated_by, 'slack');
+  server.close();
+});
+
 test('runbus replays buffer to late subscribers, then streams, and caps growth', async () => {
   const runbus = await import('../src/runbus.js');
   runbus._reset();
