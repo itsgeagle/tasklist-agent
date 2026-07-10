@@ -135,10 +135,17 @@ export function makeRouter(db, { onCommentAgent, onDispatch, onApprove, onCancel
   });
 
   r.get('/api/usage', async (_req, res) => {
-    // Import config lazily so requiring this router (e.g. in tests, before
-    // CLAUDE_BIN is set) doesn't eagerly evaluate config.js's env capture.
+    // Lazy import so requiring this router in tests (before CLAUDE_BIN is set)
+    // doesn't eagerly evaluate config.js's env capture.
     const { default: config } = await import('./config.js');
-    res.json({ today: store.agentRunsToday(db), active: store.activeAgentRuns(db), cap: config.MAX_AGENT_CONCURRENCY });
+    const today = store.usageToday(db);
+    const daily = config.DAILY_BUDGET;
+    const over = daily > 0 && today.total.cost_usd > daily;
+    res.json({ today, budget: { daily_usd: daily, over }, active: today.active, cap: config.MAX_AGENT_CONCURRENCY });
+  });
+
+  r.get('/api/usage/history', (req, res) => {
+    res.json(store.usageByDay(db, req.query.days));
   });
 
   return r;

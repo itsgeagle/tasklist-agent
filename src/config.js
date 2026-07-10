@@ -50,4 +50,5 @@ export default {
   INGEST_BOOTSTRAP_MS: Number(process.env.INGEST_BOOTSTRAP_MS || 604800000),
   DIAGNOSE_TIMEOUT_MS: Number(process.env.DIAGNOSE_TIMEOUT_MS || 600000),
   EXECUTE_TIMEOUT_MS: Number(process.env.EXECUTE_TIMEOUT_MS || 2700000),
+  DAILY_BUDGET: Number(process.env.DAILY_BUDGET || 0),
 };

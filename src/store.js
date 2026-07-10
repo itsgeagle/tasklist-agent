@@ -267,3 +267,39 @@ export function activeRunIdForTask(db, taskId) {
 export function agentRunsToday(db) {
   return db.prepare("SELECT COUNT(*) n FROM runs WHERE kind IN ('diagnose','execute') AND date(started_at)=date('now')").get().n;
 }
+
+export function usageToday(db) {
+  const rows = db.prepare(`SELECT kind,
+      COUNT(*) runs,
+      COALESCE(SUM(cost_usd), 0) cost_usd,
+      MAX(COALESCE(cost_estimated, 0)) cost_estimated,
+      COALESCE(SUM(input_tokens), 0) input_tokens,
+      COALESCE(SUM(output_tokens), 0) output_tokens
+    FROM runs
+    WHERE date(started_at) = date('now') AND status != 'skipped'
+    GROUP BY kind`).all();
+  const by_kind = {};
+  const total = { runs: 0, cost_usd: 0, cost_estimated: 0, input_tokens: 0, output_tokens: 0 };
+  for (const r of rows) {
+    by_kind[r.kind] = r;
+    total.runs += r.runs;
+    total.cost_usd += r.cost_usd;
+    total.input_tokens += r.input_tokens;
+    total.output_tokens += r.output_tokens;
+    total.cost_estimated = total.cost_estimated || r.cost_estimated;
+  }
+  return { by_kind, total, active: activeAgentRuns(db) };
+}
+
+export function usageByDay(db, days = 14) {
+  const d = Math.max(1, Math.min(90, Number(days) || 14));
+  return db.prepare(`SELECT date(started_at) date,
+      COUNT(*) runs,
+      COALESCE(SUM(cost_usd), 0) cost_usd,
+      MAX(COALESCE(cost_estimated, 0)) cost_estimated,
+      COALESCE(SUM(input_tokens), 0) input_tokens,
+      COALESCE(SUM(output_tokens), 0) output_tokens
+    FROM runs
+    WHERE started_at >= datetime('now', ?) AND status != 'skipped'
+    GROUP BY date(started_at) ORDER BY date(started_at)`).all(`-${d} days`);
+}

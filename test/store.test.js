@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { openDb, slug, fingerprint, upsertTask, listTasks, getTask,
   patchTask, addComment, createRun, finishRun, activeRunForTask,
-  acquireLock, releaseLock, findOpenTaskByThread, latestRun } from '../src/store.js';
+  acquireLock, releaseLock, findOpenTaskByThread, latestRun,
+  usageToday, usageByDay } from '../src/store.js';
 
 const db = () => openDb(':memory:');
 
@@ -123,4 +124,19 @@ test('finishRun without metrics leaves metric columns null (back-compat)', () =>
   const r = latestRun(d, 'reply');
   assert.equal(r.cost_usd, null);
   assert.equal(r.input_tokens, null);
+});
+
+test('usageToday sums metrics across all run kinds, excluding skipped', () => {
+  const d = db();
+  const a = createRun(d, { kind: 'ingest' });
+  finishRun(d, a, 'ok', '', { cost_usd: 0.02, input_tokens: 100, output_tokens: 20 });
+  const b = createRun(d, { kind: 'diagnose' });
+  finishRun(d, b, 'ok', '', { cost_usd: 0.05, input_tokens: 200, output_tokens: 30 });
+  const s = createRun(d, { kind: 'ingest' });
+  finishRun(d, s, 'skipped', 'quiet');
+  const u = usageToday(d);
+  assert.equal(u.by_kind.ingest.runs, 1);      // skipped excluded
+  assert.equal(u.by_kind.diagnose.cost_usd, 0.05);
+  assert.equal(Math.round(u.total.cost_usd * 100), 7); // 0.07
+  assert.equal(u.total.input_tokens, 300);
 });

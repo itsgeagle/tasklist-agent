@@ -243,7 +243,7 @@ test('usage endpoint counts agent runs for today', async () => {
     body: JSON.stringify({ repo_id: repoId, mode: 'code' }) });
   for (let i = 0; i < 100; i++) { if (getTask(db, id).agent_phase === 'awaiting_approval') break; await new Promise((r) => setTimeout(r, 50)); }
   const u = await (await fetch(`${base}/api/usage`)).json();
-  assert.equal(u.today >= 1, true);
+  assert.equal(u.today.by_kind.diagnose.runs >= 1, true);
   assert.equal(u.cap, 2);
   server.close();
 });

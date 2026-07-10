@@ -73,6 +73,7 @@
   <span id="usage" style="font-size:12px;opacity:.7;"></span>
 </header>
 <div class="banner" id="banner"><span id="bannermsg"></span><button type="button" class="banner-x" title="Dismiss" onclick="dismissBanner()">✕</button></div>
+<div class="banner" id="budgetbanner" style="background:#b7791f;"><span id="budgetmsg"></span><button type="button" class="banner-x" title="Dismiss" onclick="dismissBudgetBanner()">✕</button></div>
 <div id="console" hidden>
   <div class="chead">
     <span class="dot" id="condot">●</span>
@@ -149,6 +150,10 @@ function dismissBanner() {
   if (lastIngestFail != null) localStorage.setItem('ingestBannerDismissed', lastIngestFail);
   document.getElementById('banner').style.display = 'none';
 }
+function dismissBudgetBanner() {
+  localStorage.setItem('budgetBannerDismissed', new Date().toDateString());
+  document.getElementById('budgetbanner').style.display = 'none';
+}
 
 async function loadStatusBanner() {
   const s = await (await fetch('/api/status')).json();
@@ -162,7 +167,15 @@ async function loadStatusBanner() {
   document.getElementById('jobstatus').textContent =
     `ingest: ${fmt(s.ingest)} · digest: ${fmt(s.digest)}`;
   const u = await (await fetch('/api/usage')).json();
-  document.getElementById('usage').textContent = `agents: ${u.active}/${u.cap} · ${u.today} today`;
+  const t = u.today.total;
+  const tok = (t.input_tokens + t.output_tokens);
+  const dollars = t.cost_usd ? `${t.cost_estimated ? '~$' : '$'}${t.cost_usd.toFixed(2)}${t.cost_estimated ? ' est.' : ''}` : '$0.00';
+  document.getElementById('usage').textContent = `agents: ${u.active}/${u.cap} · ${dollars} · ${tok.toLocaleString()} tok today`;
+  const bb = document.getElementById('budgetbanner');
+  const showBudget = u.budget.over && localStorage.getItem('budgetBannerDismissed') !== new Date().toDateString();
+  bb.style.display = showBudget ? 'flex' : 'none';
+  if (showBudget) document.getElementById('budgetmsg').textContent =
+    `Today's est. spend ${dollars} exceeds your $${u.budget.daily_usd} budget. Scheduled jobs are still running.`;
 }
 
 async function runJob(job, btn) {
