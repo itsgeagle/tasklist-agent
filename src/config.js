@@ -51,4 +51,9 @@ export default {
   DIAGNOSE_TIMEOUT_MS: Number(process.env.DIAGNOSE_TIMEOUT_MS || 600000),
   EXECUTE_TIMEOUT_MS: Number(process.env.EXECUTE_TIMEOUT_MS || 2700000),
   DAILY_BUDGET: Number(process.env.DAILY_BUDGET || 0),
+  MODEL_INGEST: process.env.MODEL_INGEST || '',
+  MODEL_DIGEST: process.env.MODEL_DIGEST || '',
+  MODEL_REPLY: process.env.MODEL_REPLY || '',
+  MODEL_DIAGNOSE: process.env.MODEL_DIAGNOSE || '',
+  MODEL_EXECUTE: process.env.MODEL_EXECUTE || '',
 };

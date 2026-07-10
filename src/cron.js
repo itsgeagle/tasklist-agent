@@ -18,13 +18,14 @@ export async function runIngest(db) {
         bootstrapMs: config.INGEST_BOOTSTRAP_MS,
       }),
       timeoutMs: config.INGEST_TIMEOUT_MS,
+      model: config.MODEL_INGEST,
     });
   } finally { releaseLock(db, 'ingest'); }
 }
 
 export async function runDigest(db) {
   if (!acquireLock(db, 'digest')) return;
-  try { await spawnAgent(db, { kind: 'digest', prompt: digestPrompt({ apiBase: apiBase() }), timeoutMs: config.DIGEST_TIMEOUT_MS }); }
+  try { await spawnAgent(db, { kind: 'digest', prompt: digestPrompt({ apiBase: apiBase() }), timeoutMs: config.DIGEST_TIMEOUT_MS, model: config.MODEL_DIGEST }); }
   finally { releaseLock(db, 'digest'); }
 }
 
@@ -33,7 +34,7 @@ export async function runReply(db, taskId) {
   if (!task) return;
   if (!acquireLock(db, `reply:${taskId}`)) return;
   try {
-    await spawnAgent(db, { kind: 'reply', task_id: taskId, prompt: replyPrompt({ apiBase: apiBase(), task }) });
+    await spawnAgent(db, { kind: 'reply', task_id: taskId, prompt: replyPrompt({ apiBase: apiBase(), task }), model: config.MODEL_REPLY });
   } finally {
     releaseLock(db, `reply:${taskId}`);
   }

@@ -63,3 +63,24 @@ process.stdout.write(JSON.stringify({type:'result',subtype:'success',is_error:fa
   // 1M input @ $1 + 1M output @ $5 for haiku rate = 6.0
   assert.equal(Math.round(r.cost_usd), 6);
 });
+
+test('spawnAgent passes --model when set and omits it when not', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-'));
+  const stub = path.join(dir, 'stub.js');
+  fs.writeFileSync(stub, `#!/usr/bin/env node
+const fs=require('fs');
+fs.writeFileSync(process.env.PROBE, JSON.stringify(process.argv.slice(2)));
+process.stdout.write('{}');`);
+  const probe = path.join(dir, 'probe.json');
+  process.env.CLAUDE_BIN = 'node';
+  process.env.PROBE = probe;
+  const { spawnAgent } = await import('../src/agent.js?a4');
+  const { openDb } = await import('../src/store.js');
+  const db = openDb(':memory:');
+  await spawnAgent(db, { kind: 'ingest', prompt: 'hi', tools: ['Bash'], model: 'claude-haiku-4-5', _binOverride: stub });
+  let argv = JSON.parse(fs.readFileSync(probe, 'utf8'));
+  assert.ok(argv.includes('--model') && argv.includes('claude-haiku-4-5'));
+  await spawnAgent(db, { kind: 'ingest', prompt: 'hi', tools: ['Bash'], _binOverride: stub });
+  argv = JSON.parse(fs.readFileSync(probe, 'utf8'));
+  assert.equal(argv.includes('--model'), false);
+});

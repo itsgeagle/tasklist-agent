@@ -46,7 +46,7 @@ function toEvents(obj) {
   return [];
 }
 
-export function spawnAgent(db, { kind, task_id = null, prompt, tools = ['Bash'], cwd, timeoutMs = 300000, _binOverride } = {}) {
+export function spawnAgent(db, { kind, task_id = null, prompt, tools = ['Bash'], cwd, timeoutMs = 300000, model, _binOverride } = {}) {
   const runId = createRun(db, { kind, task_id });
   const key = runbus.streamKey({ kind, task_id });
   return new Promise((resolve) => {
@@ -68,6 +68,7 @@ export function spawnAgent(db, { kind, task_id = null, prompt, tools = ['Bash'],
     // --verbose makes claude emit newline-delimited events as they happen, which
     // we fan out live over runbus (see toEvents); the raw stream is still saved.
     const agentArgs = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--allowedTools', ...tools];
+    if (model) agentArgs.push('--model', model);
     const bin = _binOverride || config.CLAUDE_BIN;
     const argv = _binOverride ? [bin, ...agentArgs] : agentArgs;
     const cmd = _binOverride ? 'node' : bin;
@@ -76,7 +77,7 @@ export function spawnAgent(db, { kind, task_id = null, prompt, tools = ['Bash'],
     active.set(runId, child);
     runbus.begin(key, runId);
     let out = '', err = '', done = false, lineBuf = '';
-    let resultMeta = {}, model = null;
+    let resultMeta = {}, runModel = null;
     const finish = (status) => {
       if (done) return; done = true;
       clearTimeout(timer); active.delete(runId);
@@ -94,7 +95,7 @@ export function spawnAgent(db, { kind, task_id = null, prompt, tools = ['Bash'],
         lineBuf = lineBuf.slice(nl + 1);
         if (!line) continue;
         let obj; try { obj = JSON.parse(line); } catch { continue; } // ignore non-JSON noise
-        if (obj.type === 'system' && obj.subtype === 'init') model = obj.model || model;
+        if (obj.type === 'system' && obj.subtype === 'init') runModel = obj.model || runModel;
         if (obj.type === 'result') {
           const u = obj.usage || {};
           const input = u.input_tokens ?? null;
@@ -102,7 +103,7 @@ export function spawnAgent(db, { kind, task_id = null, prompt, tools = ['Bash'],
           let cost = typeof obj.total_cost_usd === 'number' ? obj.total_cost_usd : null;
           let estimated = false;
           if (cost == null && (input != null || output != null)) {
-            cost = estimateCost(model, input || 0, output || 0);
+            cost = estimateCost(runModel, input || 0, output || 0);
             estimated = true;
           }
           resultMeta = {
@@ -111,7 +112,7 @@ export function spawnAgent(db, { kind, task_id = null, prompt, tools = ['Bash'],
             cache_read_tokens: u.cache_read_input_tokens ?? null,
             cache_write_tokens: u.cache_creation_input_tokens ?? null,
             num_turns: obj.num_turns ?? null, duration_ms: obj.duration_ms ?? null,
-            model,
+            model: runModel,
           };
         }
         for (const ev of toEvents(obj)) runbus.publish(key, ev);

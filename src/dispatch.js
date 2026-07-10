@@ -38,6 +38,7 @@ async function doDispatch(db, taskId, { repo_id, base_branch, mode = 'code' } = 
     const res = await spawnAgent(db, {
       kind: 'diagnose', task_id: taskId, tools: modeDef.diagnoseTools, cwd: wt.worktreePath,
       timeoutMs: config.DIAGNOSE_TIMEOUT_MS,
+      model: config.MODEL_DIAGNOSE,
       prompt: modeDef.diagnosePrompt({ apiBase: apiBase(), task: t, worktreePath: wt.worktreePath }),
     });
     if (res.status === 'ok') setAgentFields(db, taskId, { agent_phase: 'awaiting_approval' });
@@ -77,6 +78,7 @@ async function doApprove(db, taskId, { plan } = {}) {
     const res = await spawnAgent(db, {
       kind: 'execute', task_id: taskId, tools: modeDef.executeTools, cwd: task.worktree_path,
       timeoutMs: config.EXECUTE_TIMEOUT_MS,
+      model: config.MODEL_EXECUTE,
       prompt: modeDef.executePrompt({ apiBase: apiBase(), task, worktreePath: task.worktree_path, plan: planText }),
     });
     setAgentFields(db, taskId, { agent_phase: res.status === 'ok' ? 'done' : 'failed' });
