@@ -197,6 +197,18 @@ async function render() {
     tasks.length ? tasks.map(taskHtml).join('') : '<p>No tasks.</p>';
 }
 
+// render() rebuilds #list wholesale, which destroys any comment <input> the user
+// is mid-way through. The 3s auto-refresh must not yank text out from under them:
+// skip the periodic render while a list input is focused or holds unsent text.
+// Explicit user actions still call render() directly.
+function isEditing() {
+  const list = document.getElementById('list');
+  if (!list) return false;
+  const ae = document.activeElement;
+  if (ae && list.contains(ae) && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) return true;
+  return [...list.querySelectorAll('input[type=text], textarea')].some((el) => el.value.trim() !== '');
+}
+
 async function toggle(id, done) {
   await fetch('/api/tasks/' + id, { method: 'PATCH',
     headers: { 'content-type': 'application/json' },
@@ -249,7 +261,7 @@ document.querySelectorAll('.tabs button').forEach((b) => b.onclick = () => {
 
 render();
 loadStatusBanner();
-setInterval(() => { render(); loadStatusBanner(); }, 3000);
+setInterval(() => { if (!isEditing()) render(); loadStatusBanner(); }, 3000);
 </script>
 </body>
 </html>
