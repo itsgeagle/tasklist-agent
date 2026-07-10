@@ -157,8 +157,37 @@ test('a stubbed ingest persists a trace (start … tool/result … end)', async 
   server.close();
 });
 
-// Rewritten against the runId-scoped SSE route in Task 5.
-test('SSE endpoint streams a finished run trace as event-stream frames', { skip: 'runId SSE route lands in Task 5' }, async () => {});
+test('SSE endpoint streams a finished run trace as event-stream frames', async () => {
+  const db = openDb(':memory:');
+  const app = express();
+  app.use(express.json());
+  app.use(makeRouter(db, { onRunJob: () => {} }));
+  const server = await new Promise((res) => { const s = app.listen(0, () => res(s)); });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  process.env.TASKLIST_API = base;
+  process.env.CLAUDE_BIN = STUB;
+  const runbus = await import('../src/runbus.js');
+  runbus._reset();
+  const { runIngest } = await import('../src/cron.js?sse');
+  await runIngest(db);                    // completes; end() drops the live stream, trace persists
+
+  const { latestRun } = await import('../src/store.js');
+  const trace = await import('../src/trace.js');
+  const fs = await import('node:fs');
+  const runId = latestRun(db, 'ingest').id;
+
+  const r = await fetch(`${base}/api/runs/${runId}/stream`);
+  assert.match(r.headers.get('content-type'), /text\/event-stream/);
+  const text = await r.text();            // resolves because the replayed 'end' closes the stream
+  assert.ok(text.includes('"t":"start"'), 'streamed a start frame');
+  assert.ok(text.includes('"t":"end"'), 'streamed an end frame');
+
+  const bad = await fetch(`${base}/api/runs/999999/stream`);
+  assert.equal(bad.status, 404);
+  fs.rmSync(trace.fileFor(runId));
+  server.close();
+  server.closeAllConnections?.();         // drop the keep-alive socket so the test process can exit
+});
 
 test('manual run route triggers the job callback and rejects unknown jobs', async () => {
   const db = openDb(':memory:');

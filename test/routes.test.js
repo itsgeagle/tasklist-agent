@@ -54,3 +54,43 @@ test('comment with ask_agent triggers onCommentAgent', async () => {
   assert.deepEqual(asked, [id]);
   server.close();
 });
+
+// A boot() variant that exposes the db so a test can record a finished run.
+function bootDb() {
+  const db = openDb(':memory:');
+  const app = express();
+  app.use(express.json());
+  app.use(makeRouter(db, {}));
+  const server = app.listen(0);
+  const base = `http://127.0.0.1:${server.address().port}`;
+  return { db, server, base };
+}
+
+test('runs endpoints: unknown run 404s; active/task-runs return arrays', async () => {
+  const { server, base } = bootDb();
+  assert.equal((await fetch(`${base}/api/runs/999999`)).status, 404);
+  assert.equal((await fetch(`${base}/api/runs/999999/stream`)).status, 404);
+  const active = await (await fetch(`${base}/api/runs/active`)).json();
+  assert.ok(Array.isArray(active));
+  const taskRuns = await (await fetch(`${base}/api/tasks/1/runs`)).json();
+  assert.ok(Array.isArray(taskRuns));
+  server.close();
+});
+
+test('finished-run stream replays the trace file then ends', async () => {
+  const { db, server, base } = bootDb();
+  const store = await import('../src/store.js');
+  const trace = await import('../src/trace.js');
+  const fs = await import('node:fs');
+  const runId = store.createRun(db, { kind: 'digest', task_id: null });
+  store.finishRun(db, runId, 'ok', 'log', {});
+  trace.open(runId);
+  trace.append(runId, { t: 'start', text: 'go' });
+  trace.append(runId, { t: 'end', status: 'ok' });
+  trace.close(runId);
+  const text = await (await fetch(`${base}/api/runs/${runId}/stream`)).text();
+  assert.ok(text.includes('"t":"start"'), 'streamed a start frame');
+  assert.ok(text.includes('"t":"end"'), 'streamed an end frame');
+  fs.rmSync(trace.fileFor(runId));
+  server.close();
+});
